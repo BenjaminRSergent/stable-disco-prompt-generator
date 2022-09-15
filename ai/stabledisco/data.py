@@ -305,7 +305,7 @@ def get_pipeline_data_loader(
     in_stage,
     out_stage,
     batch_size=100,
-    val_split=0.1,
+    val_split=0.05,
     chunk_size=64 * 10,
 ):
     tokens = tuple(
@@ -324,7 +324,12 @@ def get_pipeline_data_loader(
         chunk_size=chunk_size,
     )
     val_data_set = PipelineDataset(
-        tokens, vit14_clip_model, in_stage, out_stage, *val_idx, chunk_size=chunk_size
+        tokens,
+        vit14_clip_model,
+        in_stage,
+        out_stage,
+        *val_idx,
+        chunk_size=chunk_size
     )
     train_data_loader = DataLoader(train_data_set, batch_size=batch_size, shuffle=False)
     test_data_loader = DataLoader(val_data_set, batch_size=batch_size, shuffle=False)

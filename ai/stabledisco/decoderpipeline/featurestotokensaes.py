@@ -39,15 +39,21 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
             )
         )
 
-        block_width = self._transformer_width * 6
 
-        self._latent_to_latent_dense_stack = torchlayers.ResDenseStack(
-            self._transformer_width, block_width, self._transformer_layers, dropout=0.2
+        dense_stack_units = [(3, self._transformer_width*2),
+                             (3, self._transformer_width*4),
+                             (1, self._transformer_width*6),
+                             (1, self._transformer_width*8)]
+        self._latent_to_latent_dense_stack = torchlayers.DenseStack(
+            self._transformer_width,
+            dense_stack_units,
+            activation=nn.LeakyReLU,
+            dropout=0.25,
         )
         self._seq_expander = torchlayers.LinearWithActivation(
-            self._transformer_width,
+             dense_stack_units[-1][1],
             self._seq_len * self._transformer_width,
-            dropout=0.2,
+            dropout=0.25,
             batch_norm_type=None,
         )
 
@@ -55,13 +61,14 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
             (-1, self._seq_len, self._transformer_width)
         )
         self._pre_encode_ln = nn.LayerNorm(self._transformer_width)
-
+        
+        block_width = self._transformer_width * 4
         self._encoder = nn.TransformerEncoder(
             nn.TransformerEncoderLayer(
                 d_model=self._transformer_width,
                 nhead=self._transformer_heads,
                 dim_feedforward=block_width,
-                dropout=0.2,
+                dropout=0.25,
                 batch_first=True,
             ),
             num_layers=self._transformer_layers,
@@ -75,7 +82,7 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
                 dropout=0.25,
                 batch_first=True,
             ),
-            num_layers=self._transformer_layers,
+            num_layers=int(self._transformer_layers*1.5),
         )
 
         self._vocab_out = torch.nn.Linear(self._transformer_width, self._vocab_size)
@@ -83,16 +90,16 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
 
         self._loss_func = nn.CrossEntropyLoss(ignore_index=0)
 
-        base_learning = 9e-5
+        base_learning = 6e-4
         self._optimizer = torch.optim.NAdam(
-            self.parameters(), base_learning, betas=(0.85, 0.985)
+            self.parameters(), base_learning, betas=(0.88, 0.998)
         )
 
         self._scheduler = torch.optim.lr_scheduler.CyclicLR(
             self._optimizer,
-            base_lr=base_learning / 25,
+            base_lr=base_learning / 10,
             max_lr=base_learning,
-            step_size_up=10000,
+            step_size_up=40000,
             mode="triangular",
             cycle_momentum=False,
         )
@@ -215,177 +222,6 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
                     self._ascii_mask[token] = 0
 
         return self._ascii_mask
-
-    def beam_search(
-        self,
-        rating_model,
-        clip_model,
-        features,
-        rating_weight=1.25,
-        clip_weight=8,
-        model_beams=40,
-        clip_beams=40,
-        num_inter_beams=3000,
-        topk=1,
-        add_beams_to_final=False,
-        feature_weights=None,
-        ascii_only=True,
-        verbose=True,
-    ):
-        epsilon = 1e-8
-        self.train(False)
-        with torch.no_grad():
-            features = features.float()
-
-            if feature_weights is None:
-                feature_weights = torch.ones(
-                    (features.shape[0], 1), device=features.device
-                )
-            features = (
-                torch.sum(features * feature_weights.view(-1, 1), dim=0)
-                / features.size(0)
-            ).unsqueeze(0)
-            orig_features_norm = features.norm(dim=-1, keepdim=True)
-            features = features / orig_features_norm
-            orig_features_norm = torch.sum(
-                orig_features_norm
-            ) / orig_features_norm.size(0)
-
-            memory = self.features_to_memory(features).squeeze(0)
-
-            torch_zero = torch.tensor([0.0], device=self._device)
-            torch_start = torch.tensor(
-                [_sot_token], device=self._device, dtype=torch.long
-            )
-            curr_beams = [(torch_zero, torch_start)]
-            final_beam_tokens = []
-
-            beams = model_beams + clip_beams
-            best_match_cosine = torch.tensor(0, device=self._device)
-
-            tokens_to_find = self._seq_len - 2
-            for iter_num in range(tokens_to_find):
-                curr_tokens = torch.stack(tuple((x[1] for x in curr_beams)))
-                token_probs = torch.log(
-                    self.get_next_probs(memory, curr_tokens, ascii_only=ascii_only)
-                    + epsilon
-                )
-
-                token_probs = (
-                    token_probs.size(-1)
-                    * token_probs
-                    / token_probs.norm(dim=-1, keepdim=True)
-                )
-                new_probs = tuple(
-                    curr_beams[idx][0] + token_probs[idx]
-                    for idx in range(len(curr_beams))
-                )
-                next_probs = torch.cat(new_probs).view(-1)
-
-                new_beam_probs, args = next_probs.topk(num_inter_beams, dim=-1)
-                args = torchutils.unravel_torch_idx(
-                    args, next_probs.shape[0] // len(curr_beams)
-                )
-                prob_beam_token = [
-                    (prob, curr_beams[arg[0]][1], arg[1])
-                    for prob, arg in zip(new_beam_probs, args)
-                ]
-
-                next_beam_probs = torch.cat(
-                    tuple((x[0].unsqueeze(0) for x in prob_beam_token))
-                )
-                model_arg_sort = (
-                    torch.argsort(next_beam_probs, dim=-1).cpu().numpy().tolist()
-                )
-                prob_beam_token = [prob_beam_token[idx] for idx in model_arg_sort]
-
-                model_args = model_arg_sort[-model_beams:]
-
-                next_beam_tokens = []
-                next_beam_tokens_full = torch.zeros(
-                    len(prob_beam_token), 77, device=self._device, dtype=torch.long
-                )
-                idx = 0
-                for prob, last_tokens, new_token in prob_beam_token:
-                    if len(last_tokens) == self._seq_len - 1:
-                        new_token = _eot_token
-
-                    new_beam = torch.cat(
-                        (last_tokens, torch.tensor([new_token], device=self._device))
-                    )
-                    next_beam_tokens.append(new_beam)
-                    next_beam_tokens_full[idx] = add_token_and_end(
-                        last_tokens, new_token
-                    )
-                    idx += 1
-
-                # The first iteration has the start token place the first selection
-                eot_idx = iter_num + 2
-                next_beam_probs_aug = clip_model.cosine_similarity(
-                    features, next_beam_tokens_full, end_idx=eot_idx, verbosity=2
-                )
-                probs, clip_args = next_beam_probs_aug.topk(beams, dim=-1)
-                if probs[0] > best_match_cosine:
-                    # TODO: Optimize. Assigning here takes crazy time
-                    best_match_cosine = probs[0]
-                    top_tokens = next_beam_tokens_full[clip_args[0]]
-                    final_beam_tokens.append(top_tokens)
-
-                if clip_weight != 0:
-                    clip_bonus = torch.softmax(next_beam_probs_aug, dim=-1)
-                    clip_bonus = torch.log(clip_bonus + epsilon) * clip_weight
-                    new_beam_probs += clip_bonus
-
-                if rating_weight != 0:
-                    aug_ratings = rating_model(
-                        clip_model.features_from_tokens(next_beam_tokens_full)
-                    ).view(-1)
-                    aug_rating_probs = torch.softmax(aug_ratings, dim=-1)
-                    aug_ratings_bonus = (
-                        torch.log(aug_rating_probs + epsilon) * rating_weight
-                    )
-                    new_beam_probs += aug_ratings_bonus
-
-                _, model_args = (new_beam_probs).topk(model_beams, dim=-1)
-
-                clip_args = clip_args.cpu().numpy()
-                clip_args = [
-                    arg
-                    for arg in clip_args
-                    if arg not in model_args and prob_beam_token[arg][0] != _eot_token
-                ][:clip_beams]
-                top_args = model_args.cpu().numpy().tolist() + clip_args
-                curr_beams = []
-                for top_idx in top_args:
-                    prob = prob_beam_token[top_idx][0]
-                    new_beam = next_beam_tokens[top_idx]
-                    curr_beams.append((prob, new_beam))
-                    if add_beams_to_final:
-                        # Used for experimental evolutionary algorithms
-                        final_beam_tokens.append(next_beam_tokens_full[top_idx])
-
-                if verbose and (iter_num % 10 == 0 or iter_num == tokens_to_find - 1):
-                    print(f"{iter_num} of {self._seq_len} tokens searched")
-                    rating = rating_model(
-                        clip_model.features_from_tokens(
-                            final_beam_tokens[-1].view(1, -1)
-                        )
-                    )[0].item()
-                    print(
-                        f"curr top {best_match_cosine: 0.4f} with estimated quality {rating: 0.2f}: {self.decode(final_beam_tokens[-1])}"
-                    )
-
-            top_k = min(topk, len(final_beam_tokens))
-            final_beam_tokens, final_probs = clip_model.rank_similarity(
-                features, torch.stack(tuple(final_beam_tokens)).long(), top_k
-            )
-
-            best = final_beam_tokens
-
-            text_features = text_features = clip_model.features_from_tokens(best)
-            scale_diff = (orig_features_norm / text_features.norm(dim=-1)).cpu().numpy()
-
-            return self.decode(best), scale_diff, final_probs
 
 
 def add_token_and_end(curr_tokens, new_token, max_size=77):

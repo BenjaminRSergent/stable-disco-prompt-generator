@@ -72,7 +72,7 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
     def get_rating(self, features):
         return self(features).reshape(1)
 
-    def improve_rating(self, features, target_rating=8.25, max_diff=0.03, per_step=0.005, verbose=False):
+    def improve_rating(self, features, target_rating=8.75, max_diff=0.02, per_step=0.004, verbose=False):
         with torch.no_grad():
             if len(features.shape) == 1:
                 features = features.view(1, -1)
@@ -82,7 +82,7 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
             cosine_change = 0
             if verbose:
                 print("Start rating", before_rating)
-            while self.get_rating(out_features)[0] <= target_rating or cosine_change >= max_diff:
+            while self.get_rating(out_features)[0] <= target_rating and cosine_change < max_diff:
                 dx = torch.autograd.functional.jacobian(self.get_rating, out_features, create_graph=True).reshape(out_features.shape)
                 out_features += per_step * dx / dx.norm(dim=-1, keepdim=True)
                 out_features = out_features / out_features.norm(dim=-1, keepdim=True)

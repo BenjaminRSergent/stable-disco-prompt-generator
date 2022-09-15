@@ -41,7 +41,7 @@ def load_default_sd_model():
 
 def load_clip_model(model_name="ViT-L/14"):
     ViTL14_model, preprocess = clip.load(model_name)
-    return ClipModel(ViTL14_model, preprocess, model_name)
+    return ClipModel(ViTL14_model, preprocess)
 
 
 def transform_img(image):

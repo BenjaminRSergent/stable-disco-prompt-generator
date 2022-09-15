@@ -178,7 +178,7 @@ class ClipModel(torch.nn.Module):
     ):
         def local_encode_func(tokens):
             if end_idx == -1:
-                return self._model.encode_text(tokens)
+                return self._model.encode_text(torch.stack(tuple(tokens)))
             return self._features_from_uniform_end_tokens(tokens, end_idx)
 
         with torch.no_grad():
