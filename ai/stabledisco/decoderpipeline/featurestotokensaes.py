@@ -90,16 +90,16 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
 
         self._loss_func = nn.CrossEntropyLoss(ignore_index=0)
 
-        base_learning = 6e-4
+        base_learning = 9e-5
         self._optimizer = torch.optim.NAdam(
             self.parameters(), base_learning, betas=(0.88, 0.998)
         )
 
         self._scheduler = torch.optim.lr_scheduler.CyclicLR(
             self._optimizer,
-            base_lr=base_learning / 10,
+            base_lr=base_learning / 6,
             max_lr=base_learning,
-            step_size_up=40000,
+            step_size_up=22500,
             mode="triangular",
             cycle_momentum=False,
         )

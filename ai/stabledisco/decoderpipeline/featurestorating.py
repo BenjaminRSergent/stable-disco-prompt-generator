@@ -72,7 +72,7 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
     def get_rating(self, features):
         return self(features).reshape(1)
 
-    def improve_rating(self, features, target_rating=8.75, max_diff=0.02, per_step=0.004, verbose=False):
+    def improve_rating(self, features, target_rating=8.5, max_diff=0.005, per_step=0.004, verbose=False):
         with torch.no_grad():
             if len(features.shape) == 1:
                 features = features.view(1, -1)
