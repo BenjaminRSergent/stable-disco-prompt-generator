@@ -39,21 +39,15 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
             )
         )
 
+        block_width = self._transformer_width * 6
 
-        dense_stack_units = [(3, self._transformer_width*2),
-                             (3, self._transformer_width*4),
-                             (1, self._transformer_width*6),
-                             (1, self._transformer_width*8)]
-        self._latent_to_latent_dense_stack = torchlayers.DenseStack(
-            self._transformer_width,
-            dense_stack_units,
-            activation=nn.LeakyReLU,
-            dropout=0.25,
+        self._latent_to_latent_dense_stack = torchlayers.ResDenseStack(
+            self._transformer_width, block_width, self._transformer_layers, dropout=0.2
         )
         self._seq_expander = torchlayers.LinearWithActivation(
-             dense_stack_units[-1][1],
+            self._transformer_width,
             self._seq_len * self._transformer_width,
-            dropout=0.25,
+            dropout=0.2,
             batch_norm_type=None,
         )
 
@@ -61,14 +55,13 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
             (-1, self._seq_len, self._transformer_width)
         )
         self._pre_encode_ln = nn.LayerNorm(self._transformer_width)
-        
-        block_width = self._transformer_width * 4
+
         self._encoder = nn.TransformerEncoder(
             nn.TransformerEncoderLayer(
                 d_model=self._transformer_width,
                 nhead=self._transformer_heads,
                 dim_feedforward=block_width,
-                dropout=0.25,
+                dropout=0.2,
                 batch_first=True,
             ),
             num_layers=self._transformer_layers,
@@ -82,7 +75,7 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
                 dropout=0.25,
                 batch_first=True,
             ),
-            num_layers=int(self._transformer_layers*1.5),
+            num_layers=self._transformer_layers,
         )
 
         self._vocab_out = torch.nn.Linear(self._transformer_width, self._vocab_size)
@@ -90,16 +83,16 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
 
         self._loss_func = nn.CrossEntropyLoss(ignore_index=0)
 
-        base_learning = 9e-5
+        base_learning = 1e-4
         self._optimizer = torch.optim.NAdam(
-            self.parameters(), base_learning, betas=(0.88, 0.998)
+            self.parameters(), base_learning, betas=(0.85, 0.985)
         )
 
         self._scheduler = torch.optim.lr_scheduler.CyclicLR(
             self._optimizer,
-            base_lr=base_learning / 6,
+            base_lr=base_learning / 10,
             max_lr=base_learning,
-            step_size_up=22500,
+            step_size_up=10000,
             mode="triangular",
             cycle_momentum=False,
         )
