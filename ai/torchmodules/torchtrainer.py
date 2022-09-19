@@ -26,6 +26,7 @@ class TorchTrainer:
         max_epochs=100,
         num_to_acc=1,
         print_every=1000,
+        print_learning_rate=False
     ) -> float:
         new_best_val_loss = best_validation
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -40,7 +41,7 @@ class TorchTrainer:
             model.train(True)
             torchutils.torch_garbage_collect()
             loss = self._train_epoch(
-                model, training_loader, num_to_acc, epoch, print_every=print_every
+                model, training_loader, num_to_acc, epoch, print_every=print_every, print_learning_rate=print_learning_rate
             )
 
             print(f"Epoch loss: {loss}")
@@ -86,7 +87,8 @@ class TorchTrainer:
         num_to_acc: int,
         epoch: int,
         print_every: int,
-        clip_val=0.5,
+        print_learning_rate=False,
+        clip_val=0.75
     ):
         total_loss = 0
         running_loss = 0
@@ -127,6 +129,9 @@ class TorchTrainer:
                     f"rem mins {rem_time/60:5.0f} | "
                     f"loss {cur_loss:5.4f} | ppl {ppl:8.4f}"
                 )
+                if print_learning_rate:
+                    print(f"Learning rate: {scheduler.get_last_lr()}")
+
                 running_loss = 0
                 start_time = time.perf_counter()
 

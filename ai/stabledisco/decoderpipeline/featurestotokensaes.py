@@ -5,6 +5,8 @@ import ai.torchmodules.layers as torchlayers
 import ai.torchmodules.utils as torchutils
 import torch
 import torch.nn as nn
+from ai.stabledisco.decoderpipeline.lowerfeaturelayers import \
+    LowerFeatureLayers
 from clip.clip import _tokenizer as clip_tokenizer
 
 _sot_token = clip_tokenizer.encoder["<|startoftext|>"]
@@ -12,8 +14,8 @@ _eot_token = clip_tokenizer.encoder["<|endoftext|>"]
 
 
 class FeaturesToTokensAesModel(torchmodules.BaseModel):
-    def __init__(self, clip_model, device=None):
-        super().__init__("FeaturesToTokensAesModelV1")
+    def __init__(self, clip_model, transformer_width=768, seq_len = 77, vocab_size=49408, heads=12, layers=12, device=None):
+        super().__init__("FeaturesToTokensAesModelV2")
 
         self._ascii_mask = None
         self._dtype = clip_model.dtype
@@ -25,31 +27,21 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         for param in self._clip_model.parameters():
             param.requires_grad = False
 
-        clip_state_dict = self._clip_model.state_dict()
-        self._seq_len = clip_state_dict["positional_embedding"].shape[0]
-        self._vocab_size = clip_state_dict["token_embedding.weight"].shape[0]
+        self._seq_len = seq_len
+        self._vocab_size = vocab_size
 
-        self._transformer_width = clip_state_dict["ln_final.weight"].shape[0]
-        self._transformer_heads = self._transformer_width // 64
-        self._transformer_layers = len(
-            set(
-                k.split(".")[2]
-                for k in clip_state_dict
-                if k.startswith("transformer.resblocks")
-            )
-        )
+        self._transformer_width = transformer_width
+        self._transformer_heads = heads
+        self._transformer_layers = layers
 
 
         dense_stack_units = [(3, self._transformer_width*2),
                              (3, self._transformer_width*4),
                              (1, self._transformer_width*6),
                              (1, self._transformer_width*8)]
-        self._latent_to_latent_dense_stack = torchlayers.DenseStack(
-            self._transformer_width,
-            dense_stack_units,
-            activation=nn.LeakyReLU,
-            dropout=0.25,
-        )
+                             
+        self._feature_expander = LowerFeatureLayers()
+
         self._seq_expander = torchlayers.LinearWithActivation(
              dense_stack_units[-1][1],
             self._seq_len * self._transformer_width,
@@ -90,16 +82,16 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
 
         self._loss_func = nn.CrossEntropyLoss(ignore_index=0)
 
-        base_learning = 6e-4
+        base_learning = 5e-5
         self._optimizer = torch.optim.NAdam(
             self.parameters(), base_learning, betas=(0.88, 0.998)
         )
 
         self._scheduler = torch.optim.lr_scheduler.CyclicLR(
             self._optimizer,
-            base_lr=base_learning / 10,
+            base_lr=base_learning / 6,
             max_lr=base_learning,
-            step_size_up=40000,
+            step_size_up=2000,
             mode="triangular",
             cycle_momentum=False,
         )
@@ -144,7 +136,7 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
             dtype = self._dtype
         # latent_img_features = latent_img_features.to(dtype)
 
-        x = self._latent_to_latent_dense_stack(latent_img_features.float())
+        x = self._feature_expander(latent_img_features.float())
         x = self._seq_expander(x)
 
         seq_features = self._seq_reshaper(x) + self._clip_model.positional_embedding

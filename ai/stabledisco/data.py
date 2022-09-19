@@ -339,9 +339,9 @@ def get_pipeline_data_loader(
 def get_feature_to_rating_data_loader(
     prompt_dataframe,
     vit14_clip_model,
-    batch_size=100,
-    val_split=0.1,
-    chunk_size=1024 * 10,
+    batch_size=400,
+    val_split=0.05,
+    chunk_size=1024 * 50,
 ):
     tokens = tuple((torch.tensor(x) for x in prompt_dataframe["text_tokens"]))
     tokens = torch.stack(tokens)
@@ -364,7 +364,7 @@ def get_feature_to_rating_data_loader(
 
 
 def get_feature_to_tokens_data_loader(
-    prompt_dataframe, vit14_clip_model, batch_size=128, val_split=0.1
+    prompt_dataframe, vit14_clip_model, batch_size=200, val_split=0.1
 ):
     training_rows = prompt_dataframe[prompt_dataframe["img_features"].notna()]
     tokens = tuple((torch.tensor(x) for x in training_rows["text_tokens"]))

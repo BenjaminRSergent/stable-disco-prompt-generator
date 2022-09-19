@@ -1,13 +1,14 @@
 import ai.torchmodules as torchmodules
-import ai.torchmodules.layers as torchlayers
 import ai.torchmodules.utils as torchutils
 import torch
 import torch.nn as nn
+from ai.stabledisco.decoderpipeline.lowerfeaturelayers import \
+    LowerFeatureLayers
 
 
 class FeaturesToRatingModel(torchmodules.BaseModel):
-    def __init__(self, clip_model, device=None):
-        super().__init__("FeaturesToRatingV1")
+    def __init__(self, clip_model, freeze_lower=True, device=None):
+        super().__init__("FeaturesToRatingV2")
         # Input = (-1, 77, num_features)
         # Output = (-1, 77, vocab_size)
         # Loss = diffable encoding
@@ -32,28 +33,26 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
             )
         )
 
-        dense_stack_units = [(1, 8096), (3, 4096), (3, 2048), (3, 1024), (3, 512)]
-        self._dense_stack = torchlayers.DenseStack(
-            self._transformer_width,
-            dense_stack_units,
-            activation=nn.LeakyReLU,
-            dropout=0,
-        )
-        self._rating_out = torch.nn.Linear(dense_stack_units[-1][-1], 1)
+        self._feature_expander = LowerFeatureLayers()
+
+        if freeze_lower:
+            self._feature_expander.freeze()
+
+        self._rating_out = torch.nn.Linear(self._feature_expander.out_features, 1)
         nn.init.xavier_uniform_(self._rating_out.weight)
 
         self._loss_func = nn.MSELoss()
 
-        base_learning = 9e-5
+        base_learning = 6e-5
         self._optimizer = torch.optim.NAdam(
-            self.parameters(), base_learning, betas=(0.85, 0.985)
+            self.parameters(), base_learning, betas=(0.88, 0.995)
         )
 
         self._scheduler = torch.optim.lr_scheduler.CyclicLR(
             self._optimizer,
-            base_lr=base_learning / 20,
+            base_lr=base_learning / 6,
             max_lr=base_learning,
-            step_size_up=5000,
+            step_size_up=4000,
             mode="triangular",
             cycle_momentum=False,
         )
@@ -65,14 +64,13 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
 
     def forward(self, features):
         features = features / features.norm(dim=-1, keepdim=True)
-        x = self._dense_stack(features.float())
-
+        x = self._feature_expander(features.float())
         return self._rating_out(x)
 
     def get_rating(self, features):
         return self(features).reshape(1)
 
-    def improve_rating(self, features, target_rating=8.5, max_diff=0.005, per_step=0.004, verbose=False):
+    def improve_rating(self, features, target_rating=9.5, max_diff=0.05, per_step=0.002, verbose=False):
         with torch.no_grad():
             if len(features.shape) == 1:
                 features = features.view(1, -1)

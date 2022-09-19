@@ -17,6 +17,14 @@ class BaseModel(nn.Module):
         self._optimizer = None
         self._scheduler = None
 
+    def freeze(self):
+        for param in self.parameters():
+            param.requires_grad = False
+
+    def unfreeze(self):
+        for param in self.parameters():
+            param.requires_grad = True
+
     def calc_loss(self, x_inputs=None, y_targets=None):
         if issubclass(type(x_inputs), DataLoader):
             return self._calc_iterable_loss(x_inputs)
@@ -75,9 +83,9 @@ class BaseModel(nn.Module):
         optimizer = self.get_optimizer()
         return torch.optim.lr_scheduler.StepLR(optimizer, sys.maxsize, gamma=1.0)
 
-    def load_best(self):
+    def load_best(self, strict=True):
         model_path = get_default_path(self.get_save_dir(), "best")
-        self.load_state_dict(torch.load(model_path))
+        self.load_state_dict(torch.load(model_path), strict=strict)
 
     def save_as_best(self):
         model_path = get_default_path(self.get_save_dir(), "best")
