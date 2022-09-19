@@ -43,7 +43,7 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
 
         self._loss_func = nn.MSELoss()
 
-        base_learning = 6e-5
+        base_learning = 3e-5
         self._optimizer = torch.optim.NAdam(
             self.parameters(), base_learning, betas=(0.88, 0.995)
         )
@@ -52,7 +52,7 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
             self._optimizer,
             base_lr=base_learning / 6,
             max_lr=base_learning,
-            step_size_up=4000,
+            step_size_up=2000,
             mode="triangular",
             cycle_momentum=False,
         )

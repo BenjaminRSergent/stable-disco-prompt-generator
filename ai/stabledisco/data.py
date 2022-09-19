@@ -246,7 +246,7 @@ class ImgFeaturesToTokensSet(Dataset):
 
 class TextFeaturesToRatingSet(Dataset):
     def __init__(
-        self, clip_model, tokens, ratings, start_idx, end_idx, chunk_size, shuffle=True
+        self, clip_model, tokens, ratings, start_idx, end_idx, feature_chunk_size, rating_chunk_size, shuffle=True
     ):
         self._all_ratings = ratings
         self._all_tokens = tokens
@@ -255,7 +255,8 @@ class TextFeaturesToRatingSet(Dataset):
 
         self._start_idx = start_idx
         self._end_idx = end_idx
-        self._chunk_size = chunk_size
+        self._feature_chunk_size = feature_chunk_size
+        self._rating_chunk_size = rating_chunk_size
         self._shuffle = shuffle
 
         self._curr_ratings = None
@@ -272,14 +273,14 @@ class TextFeaturesToRatingSet(Dataset):
         self.clear()
 
         self._curr_ratings = torchdata.CudaChunk(
-            self._all_ratings[data_idxs], chunk_size=128 * 96
+            self._all_ratings[data_idxs], chunk_size=self._rating_chunk_size
         )
         self._curr_text_features = PipelineChunk(
             self._all_tokens[data_idxs],
             self._clip_model,
             PipelineStage.TOKEN_LATENT,
             PipelineStage.TOKEN_LATENT,
-            chunk_size=self._chunk_size,
+            chunk_size=self._feature_chunk_size,
         )
 
     def clear(self):
@@ -341,7 +342,8 @@ def get_feature_to_rating_data_loader(
     vit14_clip_model,
     batch_size=400,
     val_split=0.05,
-    chunk_size=1024 * 50,
+    feature_chunk_size=1024 * 15,
+    rating_chunk_size=1024 * 50,
 ):
     tokens = tuple((torch.tensor(x) for x in prompt_dataframe["text_tokens"]))
     tokens = torch.stack(tokens)
@@ -352,10 +354,10 @@ def get_feature_to_rating_data_loader(
     ratings = torch.stack(ratings)
 
     train_data_set = TextFeaturesToRatingSet(
-        vit14_clip_model, tokens, ratings, *training_idx, chunk_size=chunk_size
+        vit14_clip_model, tokens, ratings, *training_idx, feature_chunk_size=feature_chunk_size, rating_chunk_size=rating_chunk_size
     )
     val_data_set = TextFeaturesToRatingSet(
-        vit14_clip_model, tokens, ratings, *val_idx, chunk_size=chunk_size
+        vit14_clip_model, tokens, ratings, *val_idx, feature_chunk_size=feature_chunk_size, rating_chunk_size=rating_chunk_size
     )
 
     train_data_loader = DataLoader(train_data_set, batch_size=batch_size, shuffle=False)
