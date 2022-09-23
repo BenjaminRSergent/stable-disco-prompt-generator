@@ -11,7 +11,7 @@ class BeamSearchConfig:
     # Default values are based on a bayesian optimization parameter search
     def __init__(self, model_beams=40, clip_beams=40, num_inter_beams=3500,
                  rating_weight=1.0, clip_weight=2, 
-                 ascii_only=True, improve_rating=True, add_evolution_beams=False,
+                 ascii_only=True, improve_rating=True, rating_max_diff=0.025, add_evolution_beams=False,
                  device=None):
         self.model_beams = model_beams
         self.clip_beams = clip_beams
@@ -19,9 +19,9 @@ class BeamSearchConfig:
 
         self.rating_weight = rating_weight
         self.clip_weight = clip_weight
-
         self.ascii_only = ascii_only
         self.improve_rating = improve_rating
+        self.rating_max_diff = rating_max_diff
         self.add_evolution_beams = add_evolution_beams
         if device is None:
             device = torchutils.get_default_device()
@@ -118,11 +118,11 @@ class BeamSearcher:
             
             if verbose:
                 self._print_search_state(search_state)
-
+            
             # Choose k tokens with the highest estimated score
             best_tokens, final_cosine_sim = self._get_final_tokens(search_state, topk)
 
-            return self._tokens_model.decode(best_tokens), final_cosine_sim
+            return self._tokens_model.decode(best_tokens), final_cosine_sim, search_state.features
     
     def _process_orig_features(self, features, feature_weights, config, verbose):
         if feature_weights is None:
@@ -139,7 +139,7 @@ class BeamSearcher:
             # Move the features slightly toward parts of the latent space estimated to be higher rated.
             # Small nudges result in higher accuracy since the error tends to be in the direction of lower rated
             # parts of the latent space.
-            features = self._ratings_model.improve_rating(features, verbose=verbose).unsqueeze(0)
+            features = self._ratings_model.improve_rating(features, max_diff=config.rating_max_diff, verbose=verbose).unsqueeze(0)
 
         return features
 
@@ -169,11 +169,11 @@ class BeamSearcher:
             new_beam = next_beam_tokens[top_idx]
             search_state.curr_beams.append((prob, new_beam))
 
-            candidates_per_iter = 5
-            if candidates_per_iter < 10 and search_state.config.add_evolution_beams:
+            candidates_per_iter = 10
+            if search_state.config.add_evolution_beams and added < candidates_per_iter:
                 # Used for experimental evolutionary algorithms. Intermediate beams during the search
                 # are useful for the initial population
-                search_state.final_beam_tokens.append(next_beam_tokens_full[top_idx])
+                search_state.final_beam_tokens.insert(0, next_beam_tokens_full[top_idx])
                 added += 1
 
     def _get_candidate_beams(self, search_state):

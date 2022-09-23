@@ -58,27 +58,32 @@ class ClipModel(torch.nn.Module):
     ):
         with torch.no_grad():
             if isinstance(encoded_test_array[0], torch.Tensor):
-                text_features = self.features_from_tokens(
-                    encoded_test_array, end_idx=end_idx, verbosity=verbosity
-                )
+                if encoded_test_array[0].is_floating_point():
+                    text_features = encoded_test_array
+                else:
+                    text_features = self.features_from_tokens(
+                        encoded_test_array, end_idx=end_idx, verbosity=verbosity
+                    )
             else:
                 text_features = self.features_from_encoded(
                     encoded_test_array, verbosity=verbosity
                 )
-
-            baseline_features = baseline_features.half()
+            
+            baseline_features = baseline_features.float()
+            text_features = text_features.float()
+            
             baseline_features /= baseline_features.norm(dim=-1, keepdim=True)
             text_features /= text_features.norm(dim=-1, keepdim=True)
 
             similarity = torch.zeros(
                 (1, len(encoded_test_array)),
-                dtype=torch.half,
+                dtype=torch.float,
                 device=baseline_features.device,
             )
             for i in range(baseline_features.shape[0]):
                 similarity += baseline_features[i].unsqueeze(0) @ text_features.T
             similarity /= baseline_features.shape[0]
-            return similarity.squeeze(0)
+            return similarity.squeeze(0).float()
 
     def max_cosine_similarity(self, baseline_features, encoded_test_array, verbosity=1):
         with torch.no_grad():
@@ -125,7 +130,7 @@ class ClipModel(torch.nn.Module):
         similarity = self.cosine_similarity(
             baseline_features, encoded_test_array, end_idx=end_idx, verbosity=verbosity
         ).unsqueeze(0)
-
+        
         top_probs, top_labels = (
             similarity.float().cpu().topk(top_count, dim=-1, largest=largest)
         )

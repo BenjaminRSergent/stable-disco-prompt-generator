@@ -6,7 +6,7 @@ import torch.nn as nn
 
 
 class LowerFeatureLayers(torchmodules.BaseModel):
-    def __init__(self, transformer_width=768, dropout=0.25, device=None):
+    def __init__(self, transformer_width=768, dropout=0.05, device=None):
         super().__init__("FeatureLayers")
 
         if device is None:

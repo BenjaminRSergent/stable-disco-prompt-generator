@@ -41,13 +41,14 @@ def load_default_sd_model(sd_dir=None):
 
     return load_sd_model(config_path, ckpt)
 
-def load_sd_model(sd_config, ckpt):
+
+def load_sd_model(sd_config, ckpt, sd_dir=None):
     if sd_dir is None:
         sd_dir = "/home/ubuntu/development/stable-diffusion"
-        #sd_config = "configs/latent-diffusion/txt2img-1p4B-eval.yaml"
-        sd_config = "configs/stable-diffusion/v1-inference.yaml"
+    #sd_config = "configs/latent-diffusion/txt2img-1p4B-eval.yaml"
+    sd_config = "configs/stable-diffusion/v1-inference.yaml"
     config = OmegaConf.load(
-        sd_config
+        os.path.join(sd_dir, sd_config)
     )
     return load_sd_model_from_config(
         config,

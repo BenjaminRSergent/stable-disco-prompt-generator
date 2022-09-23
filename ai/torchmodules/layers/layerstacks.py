@@ -1,10 +1,7 @@
 import torch.nn as nn
-from ai.torchmodules.layers.basiclayers import (
-    LinearWithActivation,
-    Normalization,
-    QuickGELU,
-    ResLinear,
-)
+from ai.torchmodules.layers.basiclayers import (LinearWithActivation,
+                                                Normalization, QuickGELU,
+                                                ResLinear)
 
 
 class ResDenseStack(nn.Module):
@@ -58,6 +55,10 @@ class DenseStack(nn.Module):
 
         if type(units_list) is int:
             units_list = [units_list]
+
+        
+        self.in_features = input_size
+        self.out_features = units_list[-1][1]
 
         last_units = input_size
         for layer_details in units_list:

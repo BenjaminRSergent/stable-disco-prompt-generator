@@ -41,7 +41,7 @@ class TorchTrainer:
             model.train(True)
             torchutils.torch_garbage_collect()
             loss = self._train_epoch(
-                model, training_loader, num_to_acc, epoch, print_every=print_every, print_learning_rate=print_learning_rate
+                model, training_loader, num_to_acc, print_every=print_every, print_learning_rate=print_learning_rate
             )
 
             print(f"Epoch loss: {loss}")
@@ -85,7 +85,6 @@ class TorchTrainer:
         model: BaseModel,
         data_loader: DataLoader,
         num_to_acc: int,
-        epoch: int,
         print_every: int,
         print_learning_rate=False,
         clip_val=0.75
@@ -113,6 +112,8 @@ class TorchTrainer:
                 scaler.step(optimizer)
                 optimizer.zero_grad(set_to_none=True)
                 scaler.update()
+                if scheduler:
+                    scheduler.step()
 
             total_loss += loss.item() * num_to_acc
             running_loss += loss.item() * num_to_acc
@@ -135,7 +136,5 @@ class TorchTrainer:
                 running_loss = 0
                 start_time = time.perf_counter()
 
-            if scheduler:
-                scheduler.step()
 
         return total_loss / idx

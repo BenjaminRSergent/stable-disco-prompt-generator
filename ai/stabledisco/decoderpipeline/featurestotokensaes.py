@@ -9,7 +9,6 @@ from ai.stabledisco.decoderpipeline.lowerfeaturelayers import \
     LowerFeatureLayers
 from clip.clip import _tokenizer as clip_tokenizer
 
-_sot_token = clip_tokenizer.encoder["<|startoftext|>"]
 _eot_token = clip_tokenizer.encoder["<|endoftext|>"]
 
 
@@ -40,12 +39,12 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
                              (1, self._transformer_width*6),
                              (1, self._transformer_width*8)]
                              
-        self._feature_expander = LowerFeatureLayers()
+        self._feature_expander = LowerFeatureLayers(dropout=0.05)
 
         self._seq_expander = torchlayers.LinearWithActivation(
              dense_stack_units[-1][1],
             self._seq_len * self._transformer_width,
-            dropout=0.25,
+            dropout=0.05,
             batch_norm_type=None,
         )
 
@@ -60,7 +59,8 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
                 d_model=self._transformer_width,
                 nhead=self._transformer_heads,
                 dim_feedforward=block_width,
-                dropout=0.25,
+                activation=torchlayers.QuickGELU(),
+                dropout=0.05,
                 batch_first=True,
             ),
             num_layers=self._transformer_layers,
@@ -71,27 +71,42 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
                 d_model=self._transformer_width,
                 nhead=self._transformer_heads,
                 dim_feedforward=block_width,
-                dropout=0.25,
+                activation=torchlayers.QuickGELU(),
+                dropout=0.1,
                 batch_first=True,
             ),
             num_layers=int(self._transformer_layers*1.5),
         )
+
+        """
+        self._rev_decoder = nn.TransformerDecoder(
+            nn.TransformerDecoderLayer(
+                d_model=self._transformer_width,
+                nhead=self._transformer_heads,
+                dim_feedforward=block_width,
+                activation=torchlayers.QuickGELU(),
+                dropout=0.1,
+                batch_first=True,
+            ),
+            num_layers=int(self._transformer_layers*1.5),
+        )
+        """
 
         self._vocab_out = torch.nn.Linear(self._transformer_width, self._vocab_size)
         nn.init.xavier_uniform_(self._vocab_out.weight)
 
         self._loss_func = nn.CrossEntropyLoss(ignore_index=0)
 
-        base_learning = 5e-5
+        base_learning = 5.5e-5
         self._optimizer = torch.optim.NAdam(
             self.parameters(), base_learning, betas=(0.88, 0.998)
         )
 
         self._scheduler = torch.optim.lr_scheduler.CyclicLR(
             self._optimizer,
-            base_lr=base_learning / 6,
+            base_lr=base_learning / 5,
             max_lr=base_learning,
-            step_size_up=2000,
+            step_size_up=6000,
             mode="triangular",
             cycle_momentum=False,
         )
@@ -108,7 +123,7 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
                 outputs.permute(0, 2, 1)[:, :, :-1], y_targets[:, 1:].long()
             )
 
-    def forward(self, x_inputs):
+    def forward(self, x_inputs, reverse=False):
         latent_img_features, tgt_tokens = x_inputs
         latent_img_features = latent_img_features / latent_img_features.norm(
             dim=-1, keepdim=True
@@ -120,12 +135,24 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
             + self._clip_model.positional_embedding
         )
 
-        decoder_out = self._decoder(
-            memory=encoder_out,
-            tgt=tgt,
-            tgt_mask=self._target_mask,
-            tgt_key_padding_mask=(tgt_tokens == 0),
-        )
+        if reverse:
+            # TODO: implement predicting previous token from the end
+            raise NotImplementedError("Reverse Decoding is not implemented")
+            """
+            decoder_out = self._rev_decoder(encoder_out, 
+                memory=encoder_out,
+                tgt=tgt,
+                tgt_mask=self._target_mask,
+                tgt_key_padding_mask=(tgt_tokens == 0),
+            )
+            """
+        else:
+            decoder_out = self._decoder(
+                memory=encoder_out,
+                tgt=tgt,
+                tgt_mask=self._target_mask,
+                tgt_key_padding_mask=(tgt_tokens == 0),
+            )
 
         vocab_out = self._vocab_out(decoder_out)
 

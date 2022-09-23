@@ -8,3 +8,4 @@ from ai.stabledisco.decoderpipeline.featurestotokensaes import \
     FeaturesToTokensAesModel
 from ai.stabledisco.decoderpipeline.lowerfeaturelayers import \
     LowerFeatureLayers
+from ai.stabledisco.decoderpipeline.promptupgrader import PromptUpgrader

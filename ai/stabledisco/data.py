@@ -307,7 +307,7 @@ def get_pipeline_data_loader(
     out_stage,
     batch_size=100,
     val_split=0.05,
-    chunk_size=64 * 10,
+    chunk_size=100 * 20,
 ):
     tokens = tuple(
         (torch.tensor(x.astype(np.int64)) for x in prompt_dataframe["text_tokens"])
