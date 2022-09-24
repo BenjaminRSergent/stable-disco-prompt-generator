@@ -1,5 +1,6 @@
 import random
 
+import clip
 import numpy as np
 import torch
 from ai.stabledisco.decoderpipeline.promptmetrics import \
@@ -54,17 +55,45 @@ class PromptUpgrader:
             
             self._print_best(target_features, tokens, curr_best, verbose)
 
-            starter_passes = [huge_pass, med_pass, large_pass]
-            print(f"Starting upgrade with {len(starter_passes)} initial large passes")
+            max_tokens = len(clip_tokenizer.encoder)//2
 
             upgrade_cycle_func = self._run_double_upgrade_cycle if double_pass else self._run_upgrade_cycle
 
-            got_improvement = True
-            while got_improvement:
-                got_improvement = False
-                for pass_cnt in starter_passes:
+            tokens = clip.tokenize(".")[0].cuda()
+            period_token = tokens[1]
+            add_per = 2
+            prompt_end = 2
+            while prompt_end < 75:
+                if (prompt_end-2) == 0:
+                    pass_cnt = num_tokens
+                elif (prompt_end-2) % 18 == 0:
+                    pass_cnt = huge_pass
+                else:
+                    pass_cnt = large_pass
+
+                got_improvement = True
+                while got_improvement:
+                    got_improvement = False
+                    
                     new_tokens, new_best = upgrade_cycle_func(target_features, tokens, curr_best, pass_cnt, memory, ascii_only)
                     got_improvement = update_tokens_if_better(new_tokens, new_best) or got_improvement
+
+                for _ in range(3):
+                    print("Adding tokens")
+                    prev_prompt_end = prompt_end
+                    prompt_end += add_per
+                    tokens[prev_prompt_end:prompt_end] = period_token
+                    tokens[prompt_end] = _eot_token
+                    new_tokens, new_best = upgrade_cycle_func(target_features, tokens, curr_best, num_tokens, memory, ascii_only, start_idx=prev_prompt_end, end_idx=prev_prompt_end+add_per)
+                    if not update_tokens_if_better(new_tokens, new_best):
+                        print("No improvement after adding tokens")
+                        break
+                    new_tokens, new_best = upgrade_cycle_func(target_features, tokens, curr_best, num_tokens, memory, ascii_only, start_idx=prev_prompt_end, end_idx=prev_prompt_end+add_per-1)
+                    if not update_tokens_if_better(new_tokens, new_best):
+                        continue
+                    new_tokens, new_best = upgrade_cycle_func(target_features, tokens, curr_best, num_tokens, memory, ascii_only, start_idx=prev_prompt_end, end_idx=prev_prompt_end+add_per-2)
+                    if not update_tokens_if_better(new_tokens, new_best):
+                        continue
 
             while True:
                 print("Testing token removal")
@@ -155,7 +184,7 @@ class PromptUpgrader:
 
             return tokens, curr_best
 
-    def _run_upgrade_cycle(self, target_features, tokens, curr_best, num_cands, memory, ascii_only, print_freq=10, start_idx=1, end_idx=-1):
+    def _run_upgrade_cycle(self, target_features, tokens, curr_best, num_cands, memory, ascii_only, print_freq=0, start_idx=1, end_idx=-1):
         if end_idx == -1:
             end_idx = tokens.size(0)-1
         for curr_end in range(start_idx, end_idx):
@@ -186,8 +215,11 @@ class PromptUpgrader:
             if self._is_improvement(top_sim[0], curr_best):
                 tokens = top_tokens[0][0]
                 curr_best = top_sim[0].item()
-                if num_cands >= 4096:
-                    num_cands = int(max(2048, num_cands//2))
+
+                print(f"New best at token {curr_end} with {num_cands} candidates per token")
+                self._print_best(target_features, tokens, curr_best, True)
+                if num_cands*2 >= 2048:
+                    num_cands = int(max(1024, num_cands//2))
 
 
         return tokens, curr_best
