@@ -182,6 +182,8 @@ class ClipModel(torch.nn.Module):
         self, tokens, step_size=10000, verbosity=1, cuda=True, end_idx=-1
     ):
         def local_encode_func(tokens):
+            if len(tokens.shape) == 1:
+                tokens = tokens.unsqueeze(0)
             if end_idx == -1:
                 return self._model.encode_text(torch.stack(tuple(tokens)))
             return self._features_from_uniform_end_tokens(tokens, end_idx)
@@ -193,8 +195,8 @@ class ClipModel(torch.nn.Module):
                     text_features = text_features.cpu()
                 return text_features
 
-            text_features = torch.HalfTensor().cuda()
-            print(verbosity)
+            text_features = torch.tensor([], dtype=torch.float).cuda()
+
             if verbosity > 0:
                 print(f"Encoding {len(tokens)} entries")
 

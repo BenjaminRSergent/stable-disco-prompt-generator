@@ -195,7 +195,7 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
 
         return texts
 
-    def get_next_probs(self, memory, curr_tokens, ascii_only=False):
+    def get_next_probs(self, memory, curr_tokens, ascii_only=False, allow_end=False):
         num_batch = curr_tokens.size(0)
         size = curr_tokens.size(1)
         if size == self._seq_len - 1:

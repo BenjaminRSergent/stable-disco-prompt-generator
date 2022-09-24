@@ -244,6 +244,8 @@ class BeamSearcher:
             top_tokens = next_beam_tokens_full[top_clip_idxs[0]]
             search_state.final_beam_tokens.append(top_tokens)
 
+        
+
         if search_state.config.clip_weight != 0:
             clip_bonus = torch.softmax(next_beam_cosine_sim_aug, dim=-1)
             clip_bonus = self._safe_log(clip_bonus) * search_state.config.clip_weight
