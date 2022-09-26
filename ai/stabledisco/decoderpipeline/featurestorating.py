@@ -107,11 +107,11 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
             top_words = [
                 tokens[top_labels[idx].numpy()] for idx in range(top_count)
             ]
-            
+
             return top_words, top_ratings
 
 
-    def improve_rating(self, features, target_rating=100, max_diff=0.05, per_step=0.001, verbose=False):
+    def improve_rating(self, features, target_rating=10.0, max_diff=0.05, per_step=0.001, verbose=False):
         with torch.no_grad():
             if len(features.shape) == 1:
                 features = features.view(1, -1)

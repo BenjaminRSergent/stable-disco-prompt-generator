@@ -285,9 +285,9 @@ class ClipModel(torch.nn.Module):
 
         return x
 
-    def encode_text(self, text):
+    def encode_text(self, text, truncate=False):
         if type(text) is str:
-            text = EncodedText.from_text(text)
+            text = EncodedText.from_text(text, ignore_long=truncate)
         with torch.no_grad():
             encoded_text = self._model.encode_text(
                 torch.reshape(text.get_tokens(), (1, -1))

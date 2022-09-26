@@ -95,7 +95,7 @@ class BeamSearcher:
     def set_default_config(self, config):
         self._default_config = config
 
-    def beam_search(self, features, topk=1, feature_weights=None, config=None, verbose=True):
+    def beam_search(self, features, max_len=77, topk=1, feature_weights=None, config=None, verbose=True):
         if config is None:
             config = self._default_config  
 
@@ -108,7 +108,7 @@ class BeamSearcher:
             memory = self._tokens_model.features_to_memory(features).squeeze(0)
             search_state = BeamSearcher.BeamSearchState(features, memory, config)
 
-            tokens_to_find = self._tokens_model._seq_len - 2
+            tokens_to_find = min(max_len, self._tokens_model._seq_len - 2)
             for _ in range(tokens_to_find):
                 self._do_beam_search_step(search_state)
 
