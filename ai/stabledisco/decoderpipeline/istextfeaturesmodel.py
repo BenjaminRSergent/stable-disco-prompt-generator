@@ -7,9 +7,9 @@ from ai.stabledisco.decoderpipeline.lowerfeaturelayers import \
     LowerFeatureLayers
 
 
-class FeaturesToRatingModel(torchmodules.BaseModel):
+class IsTextFeaturesModel(torchmodules.BaseModel):
     def __init__(self, clip_model, freeze_lower=True, device=None):
-        super().__init__("FeaturesToRatingV2")
+        super().__init__("IsTextFeatureV1")
         # Input = (-1, 77, num_features)
         # Output = (-1, 77, vocab_size)
         # Loss = diffable encoding
@@ -53,12 +53,13 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
             dropout=0.1,
         )
         
-        self._rating_out = torch.nn.Linear(self._dense_stack.out_features, 1)
-        nn.init.xavier_uniform_(self._rating_out.weight)
+        self._prob_out = torch.nn.Linear(self._dense_stack.out_features, 1)
+        nn.init.xavier_uniform_(self._prob_out.weight)
 
-        self._loss_func = nn.MSELoss()
+        self._sig = torch.nn.Sigmoid()
+        self._loss_func = torch.nn.BCEWithLogitsLoss()
 
-        base_learning = 5e-4
+        base_learning = 5e-5
         self._optimizer = torch.optim.NAdam(
             self.parameters(), base_learning, betas=(0.88, 0.995)
         )
@@ -81,54 +82,58 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
         features = features / features.norm(dim=-1, keepdim=True)
         x = self._feature_expander(features.float())
         x = self._dense_stack(x)
-        return self._rating_out(x)
+        return self._prob_out(x)
 
-    def get_rating(self, features):
-        return self(features).reshape(1)
+    def get_text_prob(self, features):
+        return self._sig(self(features)).reshape(-1)
 
-    def rank_ratings(self, 
-                     tokens,
-                     top_count=None,
-                     largest=True
-    ):
-        if top_count is None:
-            top_count = len(tokens)
-
-        top_count = min(top_count, len(tokens))
-        with torch.no_grad():
-            
-            features = self._clip_model.encode_text(tokens)
-            ratings = self(features).view(-1)
-        
-
-            top_ratings, top_labels = (
-                ratings.float().cpu().topk(top_count, dim=-1, largest=largest)
-            )
-            top_words = [
-                tokens[top_labels[idx].numpy()] for idx in range(top_count)
-            ]
-
-            return top_words, top_ratings
-
-    def improve_rating(self, features, target_rating=15.0, max_diff=0.05, per_step=0.001, verbose=False):
+    def improve_text_prob(self, features, target_prob=0.96, max_diff=0.03, per_step=0.005, alpha=0.95, patience=10, max_divs = 40, verbose=False):
+        # TODO: Extract common code with improve rating
         with torch.no_grad():
             if len(features.shape) == 1:
                 features = features.view(1, -1)
             features = features / features.norm(dim=-1, keepdim=True)
-            before_rating = self.get_rating(features)
+            before_prob = self.get_text_prob(features)
             out_features = torch.clone(features)
             cosine_change = 0
             if verbose:
-                print("Start rating", before_rating)
-            while self.get_rating(out_features)[0] <= target_rating and cosine_change < max_diff:
-                dx = torch.autograd.functional.jacobian(self.get_rating, out_features.float(), create_graph=True).reshape(out_features.shape)
-                out_features += per_step * dx / dx.norm(dim=-1, keepdim=True)
+                print("Start prob", before_prob)
+
+            best_out_features = out_features.clone()
+            best_out_score = before_prob
+
+            prev_prob = before_prob
+            con_worse = 0
+            num_divs = 0
+            while self.get_text_prob(out_features)[0] <= target_prob and cosine_change < max_diff and num_divs < max_divs:
+                dx = torch.autograd.functional.jacobian(self.get_text_prob, out_features.float(), create_graph=True).reshape(out_features.shape)
+
+                dx_norm = dx / dx.norm(dim=-1, keepdim=True)
+
+                out_features += per_step * dx_norm
                 out_features = out_features / out_features.norm(dim=-1, keepdim=True)
 
-                cosine_change = abs(1.0 - (features.unsqueeze(0) @ out_features.T))
+                mid_prob = self.get_text_prob(out_features)
+                if mid_prob < prev_prob:
+                    con_worse += 1
                 
 
+                if con_worse > patience:
+                    per_step *= alpha
+                    num_divs += 1
+                    con_worse = 0
+                prev_prob = mid_prob
+
+                
+                cosine_change = abs(1.0 - (features.unsqueeze(0) @ out_features.T))
+
+                if mid_prob > best_out_score and cosine_change < max_diff:
+                    best_out_score = mid_prob
+                    best_out_features = out_features.clone()
+
             if verbose:
-                print("End Rating", self(out_features))
-                print("Cosine Diff of Improve Features", cosine_change)
-            return out_features.squeeze(0)
+                cosine_change = abs(1.0 - (features.unsqueeze(0) @ best_out_features.T))
+                print("End Prob", best_out_score)
+                print("Cosine Diff of New Features", cosine_change)
+
+            return best_out_features.squeeze(0)

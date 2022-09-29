@@ -1,5 +1,6 @@
 import typing
 
+import clip
 import PIL
 import torch
 from ai.stabledisco.encodedtext import EncodedText
@@ -286,12 +287,16 @@ class ClipModel(torch.nn.Module):
         return x
 
     def encode_text(self, text, truncate=False):
-        if type(text) is str:
-            text = EncodedText.from_text(text, ignore_long=truncate)
+        max_len = 77
+        if isinstance(text, str):
+            tokens = clip.tokenize(text, truncate=truncate).cuda()
+        elif isinstance(text, torch.Tensor):
+            tokens = text
+        elif isinstance(text, EncodedText):
+            tokens = text.get_tokens()
         with torch.no_grad():
-            encoded_text = self._model.encode_text(
-                torch.reshape(text.get_tokens(), (1, -1))
-            )[0]
+            encoded_text = self._model.encode_text(tokens.reshape(-1, max_len))[0]
+
         return encoded_text / encoded_text.norm(dim=-1, keepdim=True)
 
     def get_name(self):

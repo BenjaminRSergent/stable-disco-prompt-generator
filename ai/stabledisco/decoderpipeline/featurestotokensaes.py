@@ -97,7 +97,7 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
 
         self._loss_func = nn.CrossEntropyLoss(ignore_index=0)
 
-        base_learning = 5.5e-5
+        base_learning = 4.75e-5
         self._optimizer = torch.optim.NAdam(
             self.parameters(), base_learning, betas=(0.88, 0.998)
         )
@@ -195,7 +195,7 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
 
         return texts
 
-    def get_next_probs(self, memory, curr_tokens, ascii_only=False, allow_end=False):
+    def get_next_probs(self, memory, curr_tokens, ascii_only=False):
         num_batch = curr_tokens.size(0)
         size = curr_tokens.size(1)
         if size == self._seq_len - 1:
