@@ -1,4 +1,5 @@
 import random
+import re
 
 import ai.torchmodules.utils as torchutils
 import clip
@@ -226,7 +227,7 @@ class PromptUpgrader:
 
         return state.get_best()
 
-    def _run_upgrade_cycle(self, target_features, tokens, curr_best_score, num_cands, memory, ascii_only,  decay_factor=0.75, print_freq=0, start_idx=1, end_idx=-1):
+    def _run_upgrade_cycle(self, target_features, tokens, curr_best_score, num_cands, memory, ascii_only,  decay_factor=1.0, print_freq=0, start_idx=1, end_idx=-1):
         if end_idx == -1:
             end_idx = tokens.size(0)-1
         for curr_end in range(start_idx, end_idx):
@@ -245,6 +246,7 @@ class PromptUpgrader:
             for replacement_token in candidate_tokens:
                 if replacement_token == _eot_token:
                     continue
+                
                 new_tensor = tokens.clone()
 
                 new_tensor[curr_end] = replacement_token
@@ -255,14 +257,17 @@ class PromptUpgrader:
             top_tokens, top_sim = self._calculator.rank(target_features, test_stack, 1)
 
             if _is_improvement_eps(top_sim[0], curr_best_score):
+                print(f"Replacement at {curr_end}")
                 tokens = top_tokens[0][0]
                 curr_best_score = top_sim[0].item()
 
                 #print(f"New best at token {curr_end} with {num_cands} candidates per token")
                 #self._print_result(target_features, tokens, curr_best_score, True)
 
-                if num_cands*2 >= 64:
-                    num_cands = int(max(64, int(num_cands*decay_factor)))
+                if decay_factor == 0:
+                    break
+
+                num_cands = int(max(128, int(num_cands*decay_factor)))
 
         return tokens, curr_best_score
 
@@ -278,7 +283,7 @@ class PromptUpgrader:
         print(f"{result_prefix} {curr_best_score}. Cosine Similarity {top_sim}. Rating {top_rating}:\n{self._tokens_model.decode(tokens)}\n{tokens}")
     
     def _safe_log(self, tensor):
-        return torch.log(tensor + 1e-5)
+        return torch.log(tensor + 1e-6)
     
     def get_blank_prompt(self, length=75, placeholder_lst=None):
         if placeholder_lst is None:

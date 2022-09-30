@@ -13,7 +13,7 @@ _eot_token = clip_tokenizer.encoder["<|endoftext|>"]
 
 
 class FeaturesToTokensAesModel(torchmodules.BaseModel):
-    def __init__(self, clip_model, transformer_width=768, seq_len = 77, vocab_size=49408, heads=12, layers=12, device=None):
+    def __init__(self, clip_model, transformer_width=768, seq_len = 77, vocab_size=49408, heads=12, layers=12, device=None, freeze_lower=False):
         super().__init__("FeaturesToTokensAesModelV2")
 
         self._ascii_mask = None
@@ -52,7 +52,8 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
             (-1, self._seq_len, self._transformer_width)
         )
         self._pre_encode_ln = nn.LayerNorm(self._transformer_width)
-        
+
+
         block_width = self._transformer_width * 4
         self._encoder = nn.TransformerEncoder(
             nn.TransformerEncoderLayer(
@@ -65,6 +66,8 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
             ),
             num_layers=self._transformer_layers,
         )
+
+        
 
         self._decoder = nn.TransformerDecoder(
             nn.TransformerDecoderLayer(
@@ -97,16 +100,27 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
 
         self._loss_func = nn.CrossEntropyLoss(ignore_index=0)
 
-        base_learning = 4.75e-5
+        if freeze_lower:
+            self._feature_expander.freeze()
+        else:
+            self._feature_expander.unfreeze()
+
+        for param in self._seq_expander.parameters():
+            param.requires_grad = not freeze_lower
+        for param in self._encoder.parameters():
+            param.requires_grad = not freeze_lower
+        
+
+        base_learning = 3e-5
         self._optimizer = torch.optim.NAdam(
-            self.parameters(), base_learning, betas=(0.88, 0.998)
+            self.parameters(), base_learning, betas=(0.89, 0.998)
         )
 
         self._scheduler = torch.optim.lr_scheduler.CyclicLR(
             self._optimizer,
-            base_lr=base_learning / 5,
+            base_lr=base_learning / 6,
             max_lr=base_learning,
-            step_size_up=6000,
+            step_size_up=8000,
             mode="triangular",
             cycle_momentum=False,
         )
@@ -195,7 +209,7 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
 
         return texts
 
-    def get_next_probs(self, memory, curr_tokens, ascii_only=False):
+    def get_next_probs(self, memory, curr_tokens, ascii_only=True):
         num_batch = curr_tokens.size(0)
         size = curr_tokens.size(1)
         if size == self._seq_len - 1:
@@ -221,8 +235,13 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         probs = torch.softmax(vocab_out, dim=-1)
         if ascii_only:
             probs *= self._get_ascii_mask()
+        else:
+            print("Asked for non-ascii!")
+            raise Exception()
+        
         probs[:, -1] = 0
         probs[:, -2] = 0
+
 
         return probs
 

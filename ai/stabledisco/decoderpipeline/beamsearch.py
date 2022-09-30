@@ -1,4 +1,5 @@
 import re
+from tabnanny import verbose
 
 import ai.torchmodules.utils as torchutils
 import torch
@@ -30,7 +31,7 @@ class BeamSearchConfig:
         self.device = device
 
 class BeamSearcher:
-    _epsilon = 1e-8
+    _epsilon = 1e-6
     class BeamSearchState:
         # Variables related to a given beam search to reduce excessive method parameters
         def __init__(self, features: torch.tensor, memory: torch.tensor, config: BeamSearchConfig):
@@ -116,7 +117,7 @@ class BeamSearcher:
             for _ in range(tokens_to_find):
                 self._do_beam_search_step(search_state)
 
-                if verbose and search_state.iter_num % 5 == 0:
+                if verbose and search_state.iter_num % 2 == 0:
                     self._print_search_state(search_state)
                 search_state.iter_num += 1
             
@@ -164,33 +165,6 @@ class BeamSearcher:
         # Choose tokens with high estimated scores and high cosine similarity with the featurs
         top_clip, top_beam = self._get_top_idxs(search_state, top_clip_idxs)
 
-        # Subtract the start token for the number added
-        tokens_added = candidates[0].prev_tokens.size(0)
-        search_state.curr_beams = []
-
-        
-        num_candidates = 768
-        if tokens_added <= 29:
-            upgrade_top = False
-        elif tokens_added <= 35:
-            upgrade_top = tokens_added % 5 == 0
-            num_candidates = num_candidates*3
-            num_passes = 3
-        elif tokens_added <= 60:
-            upgrade_top = tokens_added % 10 == 0
-            num_candidates = num_candidates*2
-            num_passes = 3
-        elif tokens_added <= 70:
-            upgrade_top = tokens_added % 5 == 0
-            num_passes = 1
-            num_candidates = num_candidates
-        else:
-            upgrade_top = True
-            upgrade_top = tokens_added % 2 == 0
-            num_candidates = num_candidates*2
-            num_passes = 2
-            
-
         added = 0
         candidates_per_iter = 10
         def add_evolution(full_beam):
@@ -201,22 +175,80 @@ class BeamSearcher:
                 search_state.final_beam_tokens.insert(0, full_beam)
                 added += 1
 
+        
+        tokens_added = candidates[0].prev_tokens.size(0)+1
+        search_state.curr_beams = []
+
+        
+        num_candidates = 1024*6
+        num_passes = 5
+        token_step_size = 10
+
+        tokens_per_pass = 4
+        upgrade_iter_start = 16
+        upgrade_top = tokens_added >= upgrade_iter_start and (tokens_added % tokens_per_pass) == 0
+
+        start_idx = (token_step_size * (tokens_added - upgrade_iter_start)//tokens_per_pass) % (tokens_added-1)
+        start_idx = max(1, start_idx)
+
+        if start_idx < token_step_size:
+            # Avoid skipping beginning tokens after wrapping around
+            start_idx = 1
+
+        end_idx = start_idx + token_step_size
+
+        start_to_end = (73 - upgrade_iter_start)
+        since_start = (tokens_added - upgrade_iter_start)
+
+        # Linearly decrease candidates to 1024
+        num_candidates = max(int(1024*4 * (1 - since_start/start_to_end)), 1024)
+
+        
+        # Extra passes the first time it goes through each range
+        if tokens_added % 16 == 0:
+            start_idx = 1
+            end_idx = -1
+            num_candidates = int(num_candidates*1.5)
+            num_passes = 10
+
+        if tokens_added == 73:
+            start_idx = 40
+            end_idx = 70
+            num_candidates = 1024*4
+        elif tokens_added == 74:
+            start_idx = 10
+            end_idx = 40
+            num_candidates = 1024*4
+        elif tokens_added == 75:
+            start_idx = 1
+            end_idx = 74
+            num_candidates = 2048
+
+
         if upgrade_top:
             # TODO: Replace bottom beam with an upgraded version of the top beam
-            print(f"Running upgrade pass on {search_state.iter_num} tokens at {num_candidates}")
+
+            print(f"Running {num_passes} upgrade passes on {tokens_added-2} tokens at {num_candidates} from {start_idx} to {end_idx}")
             full_beam = next_beam_tokens_full[top_clip[0]]
-            end_idx = torch.argwhere(full_beam == _eot_token).view(-1)[0]
+            beam_eot_idx = torch.argwhere(full_beam == _eot_token).view(-1)[0]
             new_beam = full_beam
             
+            last_score = self._upgrader._calculator.score_tokens(search_state.features, new_beam)[0]
+            #print(f"Start {start_idx}, end {end_idx}, cand {num_candidates}\n {new_beam}")
             for _ in range(num_passes):
-                new_beam, _ = self._upgrader.single_upgrade_pass(search_state.features, new_beam, num_candidates=num_candidates, ascii_only=search_state.config.ascii_only)
+                new_beam, new_score = self._upgrader.single_upgrade_pass(search_state.features, new_beam, start_idx=start_idx, end_idx=end_idx,
+                                                                         num_candidates=num_candidates, ascii_only=search_state.config.ascii_only,
+                                                                         decay_factor=0.8)
+                if (new_score - last_score) < 1e-2:
+                    break
+                print(f"{last_score} vs {new_score}")
+                last_score = new_score
                 
             add_evolution(new_beam)
-            new_beam = new_beam[:end_idx]
+            new_beam = new_beam[:beam_eot_idx]
             # Make the upgraded beam tie with the top probability to focus on it more
             search_state.curr_beams.append((candidates[top_beam[0]].prob, new_beam))
 
-            top_clip = top_clip[1:]
             search_state.times_upgraded += 1
 
         top_idxs = top_clip+top_beam
@@ -225,6 +257,7 @@ class BeamSearcher:
             prob = candidates[top_idx].prob
             new_beam = next_beam_tokens[top_idx]
             
+            
             search_state.curr_beams.append((prob, new_beam))
             add_evolution(next_beam_tokens_full[top_idx])
 
@@ -232,8 +265,8 @@ class BeamSearcher:
         # Get the model's estimate for the next token's probability for each beam
         curr_tokens = torch.stack(tuple((x[1] for x in search_state.curr_beams)))
         token_probs = self._tokens_model.get_next_probs(search_state.memory, curr_tokens, ascii_only=search_state.config.ascii_only)
-        token_probs = self._safe_log(token_probs)
-        token_probs = token_probs.size(-1) * token_probs / token_probs.norm(dim=-1, keepdim=True)
+        token_probs = self._safe_log(torch.relu(token_probs))
+        token_probs = token_probs / token_probs.norm(dim=-1, keepdim=True)
 
         # Add the log of the token's probablity to its parent's cumulative probability
         new_probs = tuple(
@@ -247,7 +280,7 @@ class BeamSearcher:
         search_state.next_beam_scores = next_beam_scores
 
         # Convert the 1D indices into 2D to associate each with their parent to get their previous tokens
-        candidate_idxs = torchutils.unravel_torch_idx(candidate_idxs, next_probs.shape[0] // len(search_state.curr_beams))
+        candidate_idxs = torchutils.unravel_torch_idx(candidate_idxs, len(clip_tokenizer.encoder))
 
         def make_candidate_beam(prob, idx):
             return BeamSearcher.CandidateBeam(prob, search_state.curr_beams[idx[0]][1], idx[1])

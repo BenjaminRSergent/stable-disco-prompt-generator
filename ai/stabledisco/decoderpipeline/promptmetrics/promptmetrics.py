@@ -69,14 +69,14 @@ class CombinedClipRatingCalculator(MetricsCalculator):
         sim_step_scale = 0.035 * self._clip_weight
         
         # The typical starting point for a decent prompt is cosine sim 0.45
-        sim_floor = 0.45
+        sim_floor = 0.5
         sim_fitness = self._clip_model.cosine_similarity(target_features, token_features).unsqueeze(0)
         sim_fitness = self._scale_fitness(sim_fitness, floor=sim_floor, ceil=sim_floor+sim_step_scale, max_val=1.0)
         
         # The typical starting point for a decent rating is 8.0
         rating_floor = 8.0
         rating_fitness = self._to_rating_model(token_features).unsqueeze(0)
-        rating_fitness = self._scale_fitness(rating_fitness, floor=rating_floor, ceil=rating_floor+rating_step_scale, max_val=8.5)
+        rating_fitness = self._scale_fitness(rating_fitness, floor=rating_floor, ceil=rating_floor+rating_step_scale, max_val=8.0)
         
         return sim_fitness + rating_fitness
 
