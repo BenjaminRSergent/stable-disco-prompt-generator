@@ -39,12 +39,12 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
                              (1, self._transformer_width*6),
                              (1, self._transformer_width*8)]
                              
-        self._feature_expander = LowerFeatureLayers(dropout=0.05)
+        self._feature_expander = LowerFeatureLayers(dropout=0.0)
 
         self._seq_expander = torchlayers.LinearWithActivation(
              dense_stack_units[-1][1],
             self._seq_len * self._transformer_width,
-            dropout=0.05,
+            dropout=0.0,
             batch_norm_type=None,
         )
 
@@ -61,7 +61,7 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
                 nhead=self._transformer_heads,
                 dim_feedforward=block_width,
                 activation=torchlayers.QuickGELU(),
-                dropout=0.05,
+                dropout=0.0,
                 batch_first=True,
             ),
             num_layers=self._transformer_layers,
@@ -111,16 +111,16 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
             param.requires_grad = not freeze_lower
         
 
-        base_learning = 3e-5
+        base_learning = 1.0e-5
         self._optimizer = torch.optim.NAdam(
             self.parameters(), base_learning, betas=(0.89, 0.998)
         )
 
         self._scheduler = torch.optim.lr_scheduler.CyclicLR(
             self._optimizer,
-            base_lr=base_learning / 6,
+            base_lr=base_learning / 5,
             max_lr=base_learning,
-            step_size_up=8000,
+            step_size_up=4000,
             mode="triangular",
             cycle_momentum=False,
         )
@@ -205,7 +205,7 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         ends = [text.find("<|endoftext|>") for text in texts]
         for idx in range(len(texts)):
             if ends[idx] != -1:
-                texts[idx] = texts[idx][: ends[idx]]
+                texts[idx] = texts[idx][: ends[idx]].replace(r"\'", r"'")
 
         return texts
 

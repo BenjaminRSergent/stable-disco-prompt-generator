@@ -1,13 +1,18 @@
 import re
-from tabnanny import verbose
 
 import ai.torchmodules.utils as torchutils
 import torch
 from ai.stabledisco import decoderpipeline
+from ai.stabledisco.clipmodel import ClipModel
+from ai.stabledisco.decoderpipeline.featurestorating import \
+    FeaturesToRatingModel
+from ai.stabledisco.decoderpipeline.featurestotokensaes import \
+    FeaturesToTokensAesModel
 from clip.clip import _tokenizer as clip_tokenizer
 
 _sot_token = clip_tokenizer.encoder["<|startoftext|>"]
 _eot_token = clip_tokenizer.encoder["<|endoftext|>"]
+
 
 class BeamSearchConfig:
     # Default values are based on a bayesian optimization parameter search
@@ -88,7 +93,7 @@ class BeamSearcher:
 
             return ret
             
-    def __init__(self, tokens_model, ratings_model, clip_model, config=None):
+    def __init__(self, tokens_model: FeaturesToTokensAesModel, ratings_model: FeaturesToRatingModel, clip_model: ClipModel, config=None):
         self._tokens_model = tokens_model
         self._ratings_model = ratings_model
         self._clip_model = clip_model
@@ -117,8 +122,9 @@ class BeamSearcher:
             for _ in range(tokens_to_find):
                 self._do_beam_search_step(search_state)
 
-                if verbose and search_state.iter_num % 2 == 0:
+                if verbose and search_state.iter_num % 5 == 0:
                     self._print_search_state(search_state)
+                    
                 search_state.iter_num += 1
             
             if verbose:
@@ -179,8 +185,6 @@ class BeamSearcher:
         tokens_added = candidates[0].prev_tokens.size(0)+1
         search_state.curr_beams = []
 
-        
-        num_candidates = 1024*6
         num_passes = 5
         token_step_size = 10
 
@@ -201,28 +205,32 @@ class BeamSearcher:
         since_start = (tokens_added - upgrade_iter_start)
 
         # Linearly decrease candidates to 1024
-        num_candidates = max(int(1024*4 * (1 - since_start/start_to_end)), 1024)
+        num_candidates = max(int(768 * (1 - since_start/start_to_end)), 128)
 
         
         # Extra passes the first time it goes through each range
         if tokens_added % 16 == 0:
             start_idx = 1
             end_idx = -1
-            num_candidates = int(num_candidates*1.5)
+            num_candidates = int(num_candidates*3)
             num_passes = 10
 
         if tokens_added == 73:
-            start_idx = 40
-            end_idx = 70
-            num_candidates = 1024*4
+            start_idx = 50
+            end_idx = -1
+            num_candidates = 512*3
+            upgrade_top = True
         elif tokens_added == 74:
-            start_idx = 10
-            end_idx = 40
-            num_candidates = 1024*4
+            start_idx = 25
+            end_idx = 50
+            num_candidates = 512*3
+            upgrade_top = True
         elif tokens_added == 75:
             start_idx = 1
-            end_idx = 74
-            num_candidates = 2048
+            end_idx = -1
+            num_candidates = 1024
+            num_passes = 10
+            upgrade_top = True
 
 
         if upgrade_top:
@@ -238,18 +246,29 @@ class BeamSearcher:
             for _ in range(num_passes):
                 new_beam, new_score = self._upgrader.single_upgrade_pass(search_state.features, new_beam, start_idx=start_idx, end_idx=end_idx,
                                                                          num_candidates=num_candidates, ascii_only=search_state.config.ascii_only,
-                                                                         decay_factor=0.8)
+                                                                         decay_factor=0.85)
                 if (new_score - last_score) < 1e-2:
                     break
                 print(f"{last_score} vs {new_score}")
                 last_score = new_score
-                
+
+            cosine_sim = self._clip_model.cosine_similarity(search_state.features, [new_beam])
+            if cosine_sim[0] > search_state.best_match_cosine:
+                search_state.best_match_cosine = cosine_sim[0]
+                search_state.final_beam_tokens.append(new_beam)
+
             add_evolution(new_beam)
+            print(self._tokens_model.decode(new_beam))
             new_beam = new_beam[:beam_eot_idx]
             # Make the upgraded beam tie with the top probability to focus on it more
             search_state.curr_beams.append((candidates[top_beam[0]].prob, new_beam))
 
             search_state.times_upgraded += 1
+        else:
+            cosine_sim = self._clip_model.cosine_similarity(search_state.features, next_beam_tokens_full[top_clip[0]])
+            if cosine_sim[0] > search_state.best_match_cosine:
+                search_state.best_match_cosine = cosine_sim[0]
+                search_state.final_beam_tokens.append(next_beam_tokens_full[top_clip[0]])
 
         top_idxs = top_clip+top_beam
         # Append the choosen tokens to their parent beam for the next iteration
@@ -320,16 +339,8 @@ class BeamSearcher:
         next_beam_cosine_sim_aug = self._clip_model.cosine_similarity(
             search_state.features, next_beam_tokens_full, end_idx=eot_idx, verbosity=2
         )
-        cosine_sim, top_clip_idxs = next_beam_cosine_sim_aug.topk(search_state.total_beams, dim=-1)
+        _, top_clip_idxs = next_beam_cosine_sim_aug.topk(search_state.total_beams, dim=-1)
 
-        # TODO: Optimize. This triggers a sync which takes a majority of time in each search iteration
-        #       Any way to defer to allow longer async processing?
-        if cosine_sim[0] > search_state.best_match_cosine:
-            search_state.best_match_cosine = cosine_sim[0]
-            top_tokens = next_beam_tokens_full[top_clip_idxs[0]]
-            search_state.final_beam_tokens.append(top_tokens)
-
-        
 
         if search_state.config.clip_weight != 0:
             clip_bonus = torch.softmax(next_beam_cosine_sim_aug, dim=-1)
@@ -358,6 +369,8 @@ class BeamSearcher:
         return self._clip_model.rank_similarity(search_state.features, search_state.final_beam_tokens, topk)
 
     def _print_search_state(self, search_state):
+        if not search_state.final_beam_tokens:
+            return
         print(f"{search_state.iter_num} of {self._tokens_model._seq_len-2} tokens searched")
         best_features = self._clip_model.features_from_tokens(search_state.final_beam_tokens[-1].view(1, -1))
         rating = self._ratings_model(best_features)[0].item()

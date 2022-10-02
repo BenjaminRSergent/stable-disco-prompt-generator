@@ -80,7 +80,7 @@ class PromptUpgrader:
         curr_best_score = self._calculator.score_tokens(target_features, tokens)[0].item()
         return PromptUpgrader.PromptState(self, target_features, memory, tokens, curr_best_score)
 
-    def upgrade(self, target_features, tokens, candidate_cnt=1024, large_pass_factor=2, max_init_iter=5, add_stride=5, max_tokens=77, start_idx=1, state=None, ascii_only=True):
+    def upgrade(self, target_features, tokens, candidate_cnt=1024, large_pass_factor=2, max_init_iter=6, add_stride=5, max_tokens=77, start_idx=1, state=None, ascii_only=True):
         large_candidate_cnt = candidate_cnt*large_pass_factor
 
         # TODO: Mask place holders when ranking tokens
@@ -91,16 +91,23 @@ class PromptUpgrader:
             if self._verbose:
                 print("Running initial refinement")
 
-            self.remove_tokens(state.target_features, state.best_tokens, state=state, start_idx=start_idx)
+            
+            step_size = 10
             refine_cnt = candidate_cnt
-            for _ in range(max_init_iter):
-                old_best = state.curr_best_score
-                self.single_upgrade_pass(state.target_features, state.best_tokens, refine_cnt, state=state, ascii_only=ascii_only, start_idx=start_idx)
-                if not _is_improvement_eps(state.curr_best_score, old_best):
-                    if refine_cnt == large_candidate_cnt:
-                        break
-                    else:
-                        refine_cnt = large_candidate_cnt
+            for _ in range(3):
+                for curr_start in range(start_idx, state.get_end_idx() - step_size, step_size):
+                    got_improvement = False
+                    for _ in range(max_init_iter//2):
+                        old_best = state.curr_best_score
+                        self.single_upgrade_pass(state.target_features, state.best_tokens, refine_cnt, state=state, ascii_only=ascii_only, start_idx=curr_start, end_idx=curr_start+step_size)
+                        if _is_improvement_eps(state.curr_best_score, old_best):
+                            got_improvement = True
+                            
+                    if not got_improvement:
+                        if refine_cnt == large_candidate_cnt:
+                                    break
+                        else:
+                            refine_cnt = large_candidate_cnt
 
             prompt_end = state.get_end_idx()
             num_cycles = 0
@@ -230,6 +237,9 @@ class PromptUpgrader:
     def _run_upgrade_cycle(self, target_features, tokens, curr_best_score, num_cands, memory, ascii_only,  decay_factor=1.0, print_freq=0, start_idx=1, end_idx=-1):
         if end_idx == -1:
             end_idx = tokens.size(0)-1
+        end_idx = min(end_idx, tokens.size(0)-1)
+
+        ends = []
         for curr_end in range(start_idx, end_idx):
             if tokens[curr_end] == _eot_token: 
                 break
@@ -257,7 +267,7 @@ class PromptUpgrader:
             top_tokens, top_sim = self._calculator.rank(target_features, test_stack, 1)
 
             if _is_improvement_eps(top_sim[0], curr_best_score):
-                print(f"Replacement at {curr_end}")
+                ends.append(curr_end)
                 tokens = top_tokens[0][0]
                 curr_best_score = top_sim[0].item()
 
@@ -268,7 +278,7 @@ class PromptUpgrader:
                     break
 
                 num_cands = int(max(128, int(num_cands*decay_factor)))
-
+        print(f"Replacements at {ends}")
         return tokens, curr_best_score
 
     def set_verbose(self, verbose):
@@ -280,7 +290,7 @@ class PromptUpgrader:
         top_features = self._clip_model.features_from_tokens(tokens, verbosity=0)
         top_sim = self._clip_model.cosine_similarity(target_features, top_features)[0]
         top_rating = self._rating_model(top_features)[0].item()
-        print(f"{result_prefix} {curr_best_score}. Cosine Similarity {top_sim}. Rating {top_rating}:\n{self._tokens_model.decode(tokens)}\n{tokens}")
+        print(f"{result_prefix} {curr_best_score}. Cosine Similarity {top_sim}. Rating {top_rating}:\n{self._tokens_model.decode(tokens)}")
     
     def _safe_log(self, tensor):
         return torch.log(tensor + 1e-6)

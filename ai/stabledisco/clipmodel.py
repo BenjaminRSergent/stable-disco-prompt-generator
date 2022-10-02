@@ -70,8 +70,8 @@ class ClipModel(torch.nn.Module):
                     encoded_test_array, verbosity=verbosity
                 )
             
-            baseline_features = baseline_features.float()
-            text_features = text_features.float()
+            baseline_features = baseline_features
+            text_features = text_features
             
             baseline_features /= baseline_features.norm(dim=-1, keepdim=True)
             text_features /= text_features.norm(dim=-1, keepdim=True)
@@ -84,7 +84,7 @@ class ClipModel(torch.nn.Module):
             for i in range(baseline_features.shape[0]):
                 similarity += baseline_features[i].unsqueeze(0) @ text_features.T
             similarity /= baseline_features.shape[0]
-            return similarity.squeeze(0).float()
+            return similarity.squeeze(0)
 
     def max_cosine_similarity(self, baseline_features, encoded_test_array, verbosity=1):
         with torch.no_grad():

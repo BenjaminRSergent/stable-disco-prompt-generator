@@ -59,16 +59,17 @@ class IsTextFeaturesModel(torchmodules.BaseModel):
         self._sig = torch.nn.Sigmoid()
         self._loss_func = torch.nn.BCEWithLogitsLoss()
 
-        base_learning = 5e-5
+        base_learning = 1e-5
         self._optimizer = torch.optim.NAdam(
             self.parameters(), base_learning, betas=(0.88, 0.995)
         )
 
         self._scheduler = torch.optim.lr_scheduler.CyclicLR(
             self._optimizer,
-            base_lr=base_learning / 6,
+            base_lr=base_learning / 10,
             max_lr=base_learning,
             step_size_up=8000,
+            step_size_down=4000,
             mode="triangular",
             cycle_momentum=False,
         )
