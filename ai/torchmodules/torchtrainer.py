@@ -35,6 +35,7 @@ class TorchTrainer:
 
         since_improvement = 0
 
+
         print("Starting training")
         for epoch in range(max_epochs):
             print(f"Starting epoch {epoch}")
@@ -98,16 +99,17 @@ class TorchTrainer:
         optimizer.zero_grad(set_to_none=True)
         scheduler = model.get_scheduler()
 
+        device = model.get_device()
         for idx, data in enumerate(data_loader):
             x_inputs, y_targets = data
 
             with torch.autocast(device_type="cuda"):
-                loss = model.calc_loss(x_inputs, y_targets) / num_to_acc
+                loss = model.calc_loss(x_inputs.to(device, non_blocking=True), y_targets.to(device, non_blocking=True)) / num_to_acc
             # Scales the loss, and calls backward()
             # to create scaled gradients
             scaler.scale(loss).backward()
 
-            if (idx + 1) % num_to_acc == 0:
+            if num_to_acc < 2 or (idx + 1) % num_to_acc == 0:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), clip_val)
                 scaler.step(optimizer)
                 optimizer.zero_grad(set_to_none=True)

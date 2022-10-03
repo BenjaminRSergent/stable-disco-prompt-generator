@@ -1,6 +1,8 @@
 import re
 
+import ai.stabledisco.constants as sdconsts
 import ai.torchmodules.utils as torchutils
+import clip
 import torch
 from ai.stabledisco import decoderpipeline
 from ai.stabledisco.clipmodel import ClipModel
@@ -18,7 +20,7 @@ class BeamSearchConfig:
     # Default values are based on a bayesian optimization parameter search
     def __init__(self, model_beams=40, clip_beams=40, num_inter_beams=3500,
                  rating_weight=1.0, clip_weight=2, 
-                 ascii_only=True, improve_rating=True, rating_max_diff=0.025, add_evolution_beams=False,
+                 ascii_only=True, add_evolution_beams=False,
                  device=None):
         self.model_beams = model_beams
         self.clip_beams = clip_beams
@@ -27,8 +29,6 @@ class BeamSearchConfig:
         self.rating_weight = rating_weight
         self.clip_weight = clip_weight
         self.ascii_only = ascii_only
-        self.improve_rating = improve_rating
-        self.rating_max_diff = rating_max_diff
         self.add_evolution_beams = add_evolution_beams
         
         if device is None:
@@ -105,16 +105,19 @@ class BeamSearcher:
     def set_default_config(self, config):
         self._default_config = config
 
-    def beam_search(self, features, max_len=77, topk=1, feature_weights=None, config=None, verbose=True):
+    def beam_search(self, features, max_len=75, topk=1, config=None, verbose=True):
         if config is None:
             config = self._default_config  
 
         self._tokens_model.train(False)
         self._ratings_model.train(False)
 
+        if verbose:
+            print(f"Starting beam search to find the top {topk} prompts of length {max_len}.")
+
         with torch.no_grad():
             # Setup the Inital search state
-            features = self._process_orig_features(features, feature_weights, config, verbose)
+            features = self._process_orig_features(features)
             memory = self._tokens_model.features_to_memory(features).squeeze(0)
             search_state = BeamSearcher.BeamSearchState(features, memory, config)
 
@@ -135,22 +138,12 @@ class BeamSearcher:
 
             return self._tokens_model.decode(best_tokens), final_cosine_sim, search_state.features
     
-    def _process_orig_features(self, features, feature_weights, config, verbose):
-        if feature_weights is None:
-            # Default to equally weighting each feature tensor
-            feature_weights = torch.ones((features.shape[0], 1), device=features.device)
-
+    def _process_orig_features(self, features):
         # Take a weighted sum of the features and normalize
-        features = torch.sum(features * feature_weights.view(-1, 1), dim=0)
+        features = features.view(sdconsts.feature_width)
         features = (features/features.size(0)).unsqueeze(0)
         features_norm = features.norm(dim=-1, keepdim=True)
         features = features / features_norm
-
-        if config.improve_rating:
-            # Move the features slightly toward parts of the latent space estimated to be higher rated.
-            # Small nudges result in higher accuracy since the error tends to be in the direction of lower rated
-            # parts of the latent space.
-            features = self._ratings_model.improve_rating(features, max_diff=config.rating_max_diff, verbose=verbose).unsqueeze(0)
 
         return features
 
@@ -188,8 +181,8 @@ class BeamSearcher:
         num_passes = 5
         token_step_size = 10
 
-        tokens_per_pass = 4
-        upgrade_iter_start = 16
+        tokens_per_pass = 6
+        upgrade_iter_start = 18
         upgrade_top = tokens_added >= upgrade_iter_start and (tokens_added % tokens_per_pass) == 0
 
         start_idx = (token_step_size * (tokens_added - upgrade_iter_start)//tokens_per_pass) % (tokens_added-1)
@@ -205,11 +198,10 @@ class BeamSearcher:
         since_start = (tokens_added - upgrade_iter_start)
 
         # Linearly decrease candidates to 1024
-        num_candidates = max(int(768 * (1 - since_start/start_to_end)), 128)
+        num_candidates = max(int(768 * (1 - since_start/start_to_end)), 256)
 
-        
         # Extra passes the first time it goes through each range
-        if tokens_added % 16 == 0:
+        if tokens_added % 18 == 0:
             start_idx = 1
             end_idx = -1
             num_candidates = int(num_candidates*3)
@@ -261,7 +253,7 @@ class BeamSearcher:
             print(self._tokens_model.decode(new_beam))
             new_beam = new_beam[:beam_eot_idx]
             # Make the upgraded beam tie with the top probability to focus on it more
-            search_state.curr_beams.append((candidates[top_beam[0]].prob, new_beam))
+            search_state.curr_beams.append((candidates[top_beam[0]].prob, new_beam.clone()))
 
             search_state.times_upgraded += 1
         else:
@@ -374,23 +366,16 @@ class BeamSearcher:
         print(f"{search_state.iter_num} of {self._tokens_model._seq_len-2} tokens searched")
         best_features = self._clip_model.features_from_tokens(search_state.final_beam_tokens[-1].view(1, -1))
         rating = self._ratings_model(best_features)[0].item()
+        
+        orig = self._clip_model.cosine_similarity(search_state.features, [search_state.final_beam_tokens[-1]])[0]
+
+        telephone_tokens = clip.tokenize(self._tokens_model.decode(search_state.final_beam_tokens[-1]))[0].cuda()
+        telephone = self._clip_model.cosine_similarity(search_state.features, [telephone_tokens])[0]
+        print(f"Cosine telephone {search_state.best_match_cosine: 0.4f} recalc {orig:0.4f} to {telephone: 0.4f}")
+        print("Tokens pre", search_state.final_beam_tokens[-1])
+        print("Tokens post", telephone_tokens)
         print(f"curr top {search_state.best_match_cosine: 0.4f} with estimated quality {rating: 0.2f}: {self._tokens_model.decode(search_state.final_beam_tokens[-1])}")
 
-    def _get_ascii_mask(self):
-        if self._ascii_mask is None:
-            self._ascii_mask = torch.ones(len(clip_tokenizer.encoder), device="cuda")
-            norm_char_regex = re.compile(
-                r"^[a-zA-Z0-9 !\"#$%&'()*+,\-\./:;<=>?@[\]^_`{|}~\\]*$"
-            )
-            num_ascii = 0
-            for token in clip_tokenizer.decoder.keys():
-                text = clip_tokenizer.decode([token])
-                if norm_char_regex.match(text):
-                    num_ascii += 1
-                else:
-                    self._ascii_mask[token] = 0
-
-        return self._ascii_mask
 
     def _safe_log(self, tensor):
         return torch.log(tensor + self._epsilon)

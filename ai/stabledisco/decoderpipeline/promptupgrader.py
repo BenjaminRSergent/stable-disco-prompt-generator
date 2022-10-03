@@ -147,6 +147,9 @@ class PromptUpgrader:
             if not state:
                 state = self._create_state(target_features, tokens)
 
+            new_tokens, new_best = self._swap(target_features, tokens, state.tmp_best_score, start_idx=start_idx, end_idx=end_idx)
+            state.update_tokens_if_better(new_tokens, new_best)
+
             new_tokens, new_best = self._run_upgrade_cycle(target_features, tokens, state.tmp_best_score, num_candidates, state.memory,
                                                            decay_factor=decay_factor, ascii_only=ascii_only, start_idx=start_idx, end_idx=end_idx)
 
@@ -234,6 +237,34 @@ class PromptUpgrader:
 
         return state.get_best()
 
+    def _swap(self, target_features, tokens, curr_best_score, start_idx=1, end_idx=-1, max_swaps=5):
+        if end_idx == -1:
+            end_idx = tokens.size(0)-1
+        end_idx = min(end_idx, tokens.size(0)-1)
+        swap_idxs = [(src, dst) for src in range(start_idx, end_idx) for dst in range(src, end_idx)]
+
+        for _ in range(max_swaps):
+            to_test = [tokens.clone()]
+            for src, dst in swap_idxs:
+                if src == dst or tokens[src] == _eot_token or tokens[dst] == _eot_token:
+                    continue
+                new_tensor = tokens.clone()
+                new_tensor[src], new_tensor[dst] = new_tensor[dst], new_tensor[src]
+                to_test.append(new_tensor)
+
+            # TODO: Fix duplcate work
+            test_stack = torch.stack(tuple(to_test))
+            top_tokens, top_sim = self._calculator.rank(target_features, test_stack, 1)
+
+            if _is_improvement_eps(top_sim[0], curr_best_score):
+                tokens = top_tokens[0][0]
+                curr_best_score = top_sim[0].item()
+            else:
+                break
+
+        return tokens, curr_best_score
+
+
     def _run_upgrade_cycle(self, target_features, tokens, curr_best_score, num_cands, memory, ascii_only,  decay_factor=1.0, print_freq=0, start_idx=1, end_idx=-1):
         if end_idx == -1:
             end_idx = tokens.size(0)-1
@@ -248,10 +279,13 @@ class PromptUpgrader:
                 print(f"Finished {curr_end} tokens with {num_cands} candidates per token")
                 self._print_result(target_features, tokens, curr_best_score, True)
 
-            to_test = [tokens.clone()]
+            
 
             replacement_probs = self._tokens_model.get_next_probs(memory, tokens[:curr_end].unsqueeze(0), ascii_only=ascii_only)[0]
             _, candidate_tokens = replacement_probs.topk(num_cands, dim=-1)
+
+            to_test = [tokens.clone()]
+
             
             for replacement_token in candidate_tokens:
                 if replacement_token == _eot_token:

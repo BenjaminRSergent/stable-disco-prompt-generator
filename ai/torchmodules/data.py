@@ -8,8 +8,7 @@ import torch
 from ai.torchmodules.utils import get_default_device
 from torch.utils.data import Dataset
 
-from utils import get_default_path
-from utils import sort_num_asc
+from utils import get_default_path, sort_num_asc
 
 
 class CudaChunk:

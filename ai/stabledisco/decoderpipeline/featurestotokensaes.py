@@ -201,11 +201,13 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         if tokens.shape[-1] == self._vocab_size:
             tokens = self.tokens_from_output(tokens)
 
-        texts = [clip_tokenizer.decode(toks[1:].cpu().numpy()) for toks in tokens]
-        ends = [text.find("<|endoftext|>") for text in texts]
+        texts = [clip_tokenizer.decode(toks.cpu().numpy()) for toks in tokens]
         for idx in range(len(texts)):
-            if ends[idx] != -1:
-                texts[idx] = texts[idx][: ends[idx]].replace(r"\'", r"'")
+            texts[idx] = texts[idx].replace("<|startoftext|>", "")
+            end_idx = texts[idx].find("<|endoftext|>")
+
+            if end_idx != -1:
+                texts[idx] = texts[idx][:end_idx]
 
         return texts
 
@@ -247,18 +249,36 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
 
     def _get_ascii_mask(self):
         if self._ascii_mask is None:
+            print("\n\n\n\n\n\n\n")
             self._ascii_mask = torch.ones(len(clip_tokenizer.encoder), device="cuda")
+            
+            r"""
             norm_char_regex = re.compile(
-                r"^[a-zA-Z0-9 !\"#$%&'()*+,\-\./:;<=>?@[\]^_`{|}~\\]*$"
+                r"^[a-zA-Z0-9 ,\.!\"\'\?():;_-{|}<=>]*$"
+            )
+            alphanum_regex = re.compile(
+                r"^[a-zA-Z0-9 ]*$"
+            )
+            
+            norm_char_regex = re.compile(
+                r"^[a-zA-Z0-9 !\"#$%&'()*+,\-./:;<=>?@[\]^_`{|}~\\]*$"
+            )
+            """
+            norm_char_regex = re.compile(
+                r"^[a-zA-Z0-9#\$=+%@\^ ,\.!\"\'\?():;_-{|}<=>]*$"
             )
             num_ascii = 0
             for token in clip_tokenizer.decoder.keys():
                 text = clip_tokenizer.decode([token])
-                if norm_char_regex.match(text):
+                #is_ascii = norm_char_regex.match(text) and text[-1] == ' '
+                is_ascii = ' ' in text[-1] and (norm_char_regex.match(text) is not None)
+
+                if is_ascii:
                     num_ascii += 1
                 else:
                     self._ascii_mask[token] = 0
 
+            print("Total ", num_ascii)
         return self._ascii_mask
 
 

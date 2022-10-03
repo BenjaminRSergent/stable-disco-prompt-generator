@@ -42,7 +42,8 @@ class BaseModel(nn.Module):
         scaler = torch.cuda.amp.GradScaler()
         start_time = time.perf_counter()
         for batch_num, data in enumerate(data_loader):
-            loss = self.calc_loss(*data)
+            x, y = data
+            loss = self.calc_loss(x.to(self._device, non_blocking=True), y.to(self._device, non_blocking=True))
             scaler.scale(loss)
             val_loss += loss.item()
 

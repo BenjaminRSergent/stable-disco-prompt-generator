@@ -50,7 +50,7 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
             self._feature_expander.out_features,
             dense_stack_units,
             activation=nn.LeakyReLU,
-            dropout=0.1,
+            dropout=0.05,
         )
         
         self._rating_out = torch.nn.Linear(self._dense_stack.out_features, 1)
@@ -58,16 +58,16 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
 
         self._loss_func = nn.MSELoss()
 
-        base_learning = 5e-4
+        base_learning = 1e-5
         self._optimizer = torch.optim.NAdam(
             self.parameters(), base_learning, betas=(0.88, 0.995)
         )
 
         self._scheduler = torch.optim.lr_scheduler.CyclicLR(
             self._optimizer,
-            base_lr=base_learning / 6,
+            base_lr=base_learning / 10,
             max_lr=base_learning,
-            step_size_up=8000,
+            step_size_up=10000,
             mode="triangular",
             cycle_momentum=False,
         )
