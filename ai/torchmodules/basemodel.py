@@ -2,6 +2,7 @@ import math
 import sys
 import time
 
+import ai.torchmodules.utils as torchutils
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -10,12 +11,17 @@ from utils import get_default_path
 
 
 class BaseModel(nn.Module):
-    def __init__(self, name: str):
+    def __init__(self, name: str, device = None):
         super().__init__()
         self._name = name
         self._loss_func = None
         self._optimizer = None
         self._scheduler = None
+
+        if device is None:
+            device = torchutils.get_default_device()
+        self._device = device
+        self.to(self._device)
 
     def freeze(self):
         for param in self.parameters():
@@ -37,7 +43,6 @@ class BaseModel(nn.Module):
         return self._calc_batch_loss(x_inputs, y_targets)
 
     def _calc_iterable_loss(self, data_loader, print_every=250):
-
         val_loss = 0
         scaler = torch.cuda.amp.GradScaler()
         start_time = time.perf_counter()
@@ -66,6 +71,9 @@ class BaseModel(nn.Module):
     def _calc_batch_loss(self, x_inputs, y_targets):
         outputs = self(x_inputs)
         return self._loss_func(outputs, y_targets)
+
+    def get_device(self):
+        return self._device
 
     def get_loss_func(self):
         if not self._loss_func:

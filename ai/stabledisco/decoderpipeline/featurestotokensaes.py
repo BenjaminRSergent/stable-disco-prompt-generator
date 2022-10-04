@@ -14,13 +14,10 @@ _eot_token = clip_tokenizer.encoder["<|endoftext|>"]
 
 class FeaturesToTokensAesModel(torchmodules.BaseModel):
     def __init__(self, clip_model, transformer_width=768, seq_len = 77, vocab_size=49408, heads=12, layers=12, device=None, freeze_lower=False):
-        super().__init__("FeaturesToTokensAesModelV2")
+        super().__init__("FeaturesToTokensAesModelV2", device=None)
 
         self._ascii_mask = None
         self._dtype = clip_model.dtype
-        if device is None:
-            device = torchutils.get_default_device()
-        self._device = device
 
         self._clip_model = clip_model
         for param in self._clip_model.parameters():
@@ -39,12 +36,12 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
                              (1, self._transformer_width*6),
                              (1, self._transformer_width*8)]
                              
-        self._feature_expander = LowerFeatureLayers(dropout=0.0)
+        self._feature_expander = LowerFeatureLayers(dropout=0.15)
 
         self._seq_expander = torchlayers.LinearWithActivation(
              dense_stack_units[-1][1],
             self._seq_len * self._transformer_width,
-            dropout=0.0,
+            dropout=0.1,
             batch_norm_type=None,
         )
 
@@ -61,7 +58,7 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
                 nhead=self._transformer_heads,
                 dim_feedforward=block_width,
                 activation=torchlayers.QuickGELU(),
-                dropout=0.0,
+                dropout=0.05,
                 batch_first=True,
             ),
             num_layers=self._transformer_layers,
@@ -75,7 +72,7 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
                 nhead=self._transformer_heads,
                 dim_feedforward=block_width,
                 activation=torchlayers.QuickGELU(),
-                dropout=0.1,
+                dropout=0.0,
                 batch_first=True,
             ),
             num_layers=int(self._transformer_layers*1.5),

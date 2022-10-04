@@ -1,24 +1,19 @@
+import ai.stabledisco.constants as sdconsts
 import ai.torchmodules as torchmodules
 import ai.torchmodules.layers as torchlayers
-import ai.torchmodules.utils as torchutils
 import torch
 import torch.nn as nn
-from ai.stabledisco.decoderpipeline.lowerfeaturelayers import \
-    LowerFeatureLayers
 
 
 class FeaturesToRatingModel(torchmodules.BaseModel):
-    def __init__(self, clip_model, freeze_lower=True, device=None):
-        super().__init__("FeaturesToRatingV2")
+    def __init__(self, clip_model, base_learning=2e-4, learning_divisor=10, step_size_up=25500, device=None):
+        super().__init__("FeaturesToRatingV5", device=device)
         # Input = (-1, 77, num_features)
         # Output = (-1, 77, vocab_size)
         # Loss = diffable encoding
         print(clip_model.dtype)
 
         self._dtype = clip_model.dtype
-        if device is None:
-            device = torchutils.get_default_device()
-        self._device = device
 
         self._clip_model = clip_model
         for param in self._clip_model.parameters():
@@ -26,49 +21,36 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
 
         clip_state_dict = self._clip_model.state_dict()
         self._transformer_width = clip_state_dict["ln_final.weight"].shape[0]
-        self._transformer_layers = len(
-            set(
-                k.split(".")[2]
-                for k in clip_state_dict
-                if k.startswith("transformer.resblocks")
-            )
-        )
 
-        self._feature_expander = LowerFeatureLayers(dropout=0.05)
+        self._res_stack = torchlayers.ResDenseStack(self._transformer_width, self._transformer_width*6, layers=4, activation=nn.LeakyReLU, dropout=0.1)
 
-        if freeze_lower:
-            self._feature_expander.freeze()
-        else:
-            self._feature_expander.unfreeze()
-        
-        dense_stack_units = [(1, 512),
-                             (2, 128),
-                             (2, 64),
-                             (1, 32)]
+        dense_stack_units = [(1, 8192),
+                             (2, 4096),
+                             (5, 1024),
+                             (8, 512)]
                              
         self._dense_stack = torchlayers.DenseStack(
-            self._feature_expander.out_features,
+            self._transformer_width,
             dense_stack_units,
             activation=nn.LeakyReLU,
-            dropout=0.05,
+            dropout=0.0,
         )
         
-        self._rating_out = torch.nn.Linear(self._dense_stack.out_features, 1)
-        nn.init.xavier_uniform_(self._rating_out.weight)
+        self._rating_lin = torch.nn.Linear(self._dense_stack.out_features, 1)
+        nn.init.xavier_uniform_(self._rating_lin.weight)
 
         self._loss_func = nn.MSELoss()
 
-        base_learning = 1e-5
         self._optimizer = torch.optim.NAdam(
             self.parameters(), base_learning, betas=(0.88, 0.995)
         )
 
         self._scheduler = torch.optim.lr_scheduler.CyclicLR(
             self._optimizer,
-            base_lr=base_learning / 10,
+            base_lr=base_learning / learning_divisor,
             max_lr=base_learning,
-            step_size_up=10000,
-            mode="triangular",
+            step_size_up=step_size_up,
+            mode="triangular2",
             cycle_momentum=False,
         )
 
@@ -79,9 +61,9 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
 
     def forward(self, features):
         features = features / features.norm(dim=-1, keepdim=True)
-        x = self._feature_expander(features.float())
+        x = self._res_stack(features)
         x = self._dense_stack(x)
-        return self._rating_out(x)
+        return self._rating_lin(x)
 
     def get_rating(self, features):
         return self(features).reshape(1)

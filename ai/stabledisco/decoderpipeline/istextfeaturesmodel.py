@@ -1,3 +1,4 @@
+import ai.stabledisco.constants as sdconsts
 import ai.torchmodules as torchmodules
 import ai.torchmodules.layers as torchlayers
 import ai.torchmodules.utils as torchutils
@@ -8,71 +9,46 @@ from ai.stabledisco.decoderpipeline.lowerfeaturelayers import \
 
 
 class IsTextFeaturesModel(torchmodules.BaseModel):
-    def __init__(self, clip_model, freeze_lower=True, device=None):
-        super().__init__("IsTextFeatureV1")
+    def __init__(self, base_learning = 1e-4, learning_divisor=6, step_size_up=50000, device=None):
+        super().__init__("IsTextFeatureV2", device=device)
         # Input = (-1, 77, num_features)
         # Output = (-1, 77, vocab_size)
         # Loss = diffable encoding
-        print(clip_model.dtype)
 
-        self._dtype = clip_model.dtype
-        if device is None:
-            device = torchutils.get_default_device()
-        self._device = device
+        self._transformer_width = sdconsts.feature_width
+        self._res_stack = torchlayers.ResDenseStack(sdconsts.feature_width, sdconsts.feature_width*6, layers=4, activation=nn.LeakyReLU, dropout=0.1)
 
-        self._clip_model = clip_model
-        for param in self._clip_model.parameters():
-            param.requires_grad = False
-
-        clip_state_dict = self._clip_model.state_dict()
-        self._transformer_width = clip_state_dict["ln_final.weight"].shape[0]
-        self._transformer_layers = len(
-            set(
-                k.split(".")[2]
-                for k in clip_state_dict
-                if k.startswith("transformer.resblocks")
-            )
-        )
-
-        self._feature_expander = LowerFeatureLayers(dropout=0.05)
-
-        if freeze_lower:
-            self._feature_expander.freeze()
-        else:
-            self._feature_expander.unfreeze()
-        
-        dense_stack_units = [(1, 512),
-                             (2, 128),
-                             (2, 64),
-                             (1, 32)]
+        dense_stack_units = [(1, 8192),
+                             (2, 4096),
+                             (5, 1024),
+                             (8, 512)]
                              
         self._dense_stack = torchlayers.DenseStack(
-            self._feature_expander.out_features,
+            sdconsts.feature_width,
             dense_stack_units,
             activation=nn.LeakyReLU,
-            dropout=0.1,
+            dropout=0.05,
         )
         
         self._prob_out = torch.nn.Linear(self._dense_stack.out_features, 1)
         nn.init.xavier_uniform_(self._prob_out.weight)
-
+        
         self._sig = torch.nn.Sigmoid()
         self._loss_func = torch.nn.BCEWithLogitsLoss()
 
-        base_learning = 1e-5
         self._optimizer = torch.optim.NAdam(
             self.parameters(), base_learning, betas=(0.88, 0.995)
         )
 
         self._scheduler = torch.optim.lr_scheduler.CyclicLR(
             self._optimizer,
-            base_lr=base_learning / 10,
+            base_lr=base_learning / learning_divisor,
             max_lr=base_learning,
-            step_size_up=8000,
-            step_size_down=4000,
-            mode="triangular",
+            step_size_up=step_size_up,
+            mode="triangular2",
             cycle_momentum=False,
         )
+
 
     def _calc_batch_loss(self, x_inputs, y_targets):
         with torch.autocast(device_type="cuda"):
@@ -81,7 +57,7 @@ class IsTextFeaturesModel(torchmodules.BaseModel):
 
     def forward(self, features):
         features = features / features.norm(dim=-1, keepdim=True)
-        x = self._feature_expander(features.float())
+        x = self._res_stack(features.float())
         x = self._dense_stack(x)
         return self._prob_out(x)
 

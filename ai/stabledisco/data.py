@@ -249,12 +249,11 @@ class ImgFeaturesToTokensSet(Dataset):
 
 class TextFeaturesToRatingSet(Dataset):
     def __init__(
-        self, clip_model, tokens, ratings, start_idx, end_idx, shuffle=True
+        self, tokens, ratings, start_idx, end_idx, shuffle=True
     ):
         self._all_ratings = ratings
+        # TODO: Change name to all_features
         self._all_tokens = tokens
-
-        self._clip_model = clip_model
 
         self._start_idx = start_idx
         self._end_idx = end_idx
@@ -264,6 +263,7 @@ class TextFeaturesToRatingSet(Dataset):
         self._prepare_data()
 
     def _prepare_data(self):
+        self.clear()
         if self._shuffle:
             self._data_idxs = (
                 torch.randperm(self._end_idx - self._start_idx) + self._start_idx
@@ -271,18 +271,16 @@ class TextFeaturesToRatingSet(Dataset):
         else:
             self._data_idxs = torch.arange(self._start_idx, self._end_idx)
 
-        self.clear()
-
     def clear(self):
-        pass
+        self._data_idxs = None
 
     def __len__(self):
         return self._end_idx - self._start_idx
 
     def __getitem__(self, idx):
-        if self._curr_text_features is None:
+        if self._data_idxs is None:
             self._prepare_data()
-        ret = (self._curr_text_features[idx], self._curr_ratings[idx])
+        ret = (self._all_tokens[idx], self._all_ratings[idx])
 
         if idx == self._end_idx - 1:
             self.clear()
@@ -291,64 +289,56 @@ class TextFeaturesToRatingSet(Dataset):
 
 class AlteredFeaturesSet(Dataset):
     def __init__(
-        self, clip_model, tokens, start_idx, end_idx, feature_chunk_size, feature_width=768, shuffle=True, device=None
+        self, features, start_idx, end_idx, feature_width=768, shuffle=True, device=None
     ):
-        self._all_tokens = tokens
-
-        self._clip_model = clip_model
+        self.all_features = features
 
         self._start_idx = start_idx
         self._end_idx = end_idx
-        self._feature_chunk_size = feature_chunk_size
         self._shuffle = shuffle
         self._feature_width = feature_width
-        
-        self._curr_ratings = None
-        self._curr_text_features = None
-        
+        self.data_idxs = None
 
         if device is None:
             device = torchutils.get_default_device()
         self._device = device
-        self._is_text = torch.tensor([1.0, 0.0], device=self._device)
+        
+        self._is_text = torch.tensor([1.0, 0.0])
         self._last_features=None
+        self._prepare_data
 
     def _prepare_data(self):
+        self.clear()
         if self._shuffle:
-            data_idxs = (
+            self._data_idxs = (
                 torch.randperm(self._end_idx - self._start_idx) + self._start_idx
             )
         else:
-            data_idxs = torch.arange(self._start_idx, self._end_idx)
-
-        self.clear()
-
-        self._curr_text_features = PipelineChunk(
-            self._all_tokens[data_idxs],
-            self._clip_model,
-            PipelineStage.TOKEN_LATENT,
-            PipelineStage.TOKEN_LATENT,
-            chunk_size=self._feature_chunk_size,
-        )
+            self._data_idxs = torch.arange(self._start_idx, self._end_idx)
 
     def clear(self):
-        self._curr_text_features = None
-        self._curr_ratings = None
+        self._data_idxs = None
 
     def _make_rand_shift(self):
-        shift = torch.randn((self._feature_width), device=self._device)
+        shift = torch.randn((self._feature_width))
         shift /= shift.norm(dim=-1, keepdim=True)
         scale = self._random_scale()
         return scale * shift
 
-    def _random_scale(self, mean=0.0, std=1.0, min_scale=0.002):
-        return torch.abs(torch.rand(1, device=self._device) * std + mean) + min_scale
+    def _random_scale(self, mean=0.0, std=0.5, min_scale=0.05):
+        scale = torch.abs(torch.rand(1) * std + mean) + min_scale
+        if scale <= 0:
+            scale += min_scale
+        else:
+            scale -= min_scale
+
+        return scale
 
     def __len__(self):
         return (self._end_idx - self._start_idx)*2
 
     def __getitem__(self, idx):
-        if self._curr_text_features is None:
+        if self._data_idxs is None:
             self._prepare_data()
         
         with torch.no_grad():
@@ -366,14 +356,14 @@ class AlteredFeaturesSet(Dataset):
                 self._last_features = features
         
         ret = (features, self._is_text[idx%2])
-        if idx == self._end_idx - 1:
+        if idx//2 == self._end_idx - 1:
             self.clear()
 
         return ret
 
     def _get_features_for_idx(self, idx):
-        actual_idx = idx // 2
-        features = self._curr_text_features[actual_idx].float()
+        actual_idx = self._data_idxs[idx // 2]
+        features = self.all_features[actual_idx].float()
         return features / features.norm(dim=-1, keepdim=True)
         
 def get_pipeline_data_loader(
@@ -442,27 +432,28 @@ def get_tokens_to_features(
     else:
         val_data_set = None
     train_data_loader = DataLoader(train_data_set, batch_size=batch_size, shuffle=False, pin_memory=pin_memory)
-    test_data_loader = DataLoader(val_data_set, batch_size=batch_size, shuffle=False, non_blocking=True, pin_memory=pin_memory)
+    test_data_loader = DataLoader(val_data_set, batch_size=batch_size, shuffle=False, pin_memory=pin_memory)
     return train_data_loader, test_data_loader
 
 
 def get_feature_to_rating_data_loader(
     features,
     ratings,
-    vit14_clip_model,
-    batch_size=400,
+    batch_size=500,
     val_split=0.05,
 ):
-    features = torch.tensor(np.array(features).astype(np.float32))
-    ratings = torch.tensor(np.array(ratings).astype(np.float32))
+    if not isinstance(features, torch.Tensor):
+        features = torch.tensor(np.array(features).astype(np.float32))
+    if not isinstance(ratings, torch.Tensor):
+        ratings = torch.tensor(np.array(ratings).astype(np.float32))
 
     training_idx, val_idx = torchutils.get_split_idxs(features.size(0), val_split)
 
     train_data_set = TextFeaturesToRatingSet(
-        vit14_clip_model, features, ratings, *training_idx
+        features, ratings, *training_idx
     )
     val_data_set = TextFeaturesToRatingSet(
-        vit14_clip_model, features, ratings, *val_idx
+        features, ratings, *val_idx
     )
 
     train_data_loader = DataLoader(train_data_set, batch_size=batch_size, shuffle=False)
@@ -470,20 +461,19 @@ def get_feature_to_rating_data_loader(
     return train_data_loader, test_data_loader
 
 def get_altered_feature_data_loader(
-    text_tokens,
-    vit14_clip_model,
-    batch_size=350,
+    features,
+    batch_size=500,
     val_split=0.05,
-    feature_chunk_size=1024 * 15,
 ):
-    tokens = torch.tensor(np.array(text_tokens).astype(np.int32))
-    training_idx, val_idx = torchutils.get_split_idxs(tokens.size(0), val_split)
+    if not isinstance(features, torch.Tensor):
+        features = torch.tensor(np.array(features).astype(np.float32))
+    training_idx, val_idx = torchutils.get_split_idxs(features.size(0), val_split)
 
     train_data_set = AlteredFeaturesSet(
-        vit14_clip_model, tokens, *training_idx, feature_chunk_size=feature_chunk_size
+        features, *training_idx
     )
     val_data_set = AlteredFeaturesSet(
-        vit14_clip_model, tokens, *val_idx, feature_chunk_size=feature_chunk_size
+        features, *val_idx
     )
 
     train_data_loader = DataLoader(train_data_set, batch_size=batch_size, shuffle=False)
