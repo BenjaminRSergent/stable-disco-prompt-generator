@@ -18,24 +18,24 @@ _eot_token = clip_tokenizer.encoder["<|endoftext|>"]
 
 class UpgradeConfig:
     def __init__(self,
-                num_passes = 5,
-                num_large_passes = 10,
-                baseline_cands = 512,
-                min_cands = 128,
-                large_pass_mul = 3,
-                token_step_size = 20,
-                tokens_per_pass = 10,
-                upgrade_iter_start = 10,
-                large_pass_freq = 20):
-        self._num_passes = num_passes
-        self._num_large_passes = num_large_passes
-        self._baseline_cands = baseline_cands
-        self._min_cands = min_cands
-        self._large_pass_mul = large_pass_mul
-        self._token_step_size = token_step_size 
-        self._tokens_per_pass = tokens_per_pass 
-        self._upgrade_iter_start = upgrade_iter_start 
-        self._large_pass_freq = large_pass_freq
+                num_passes = 3,
+                num_large_passes = 6,
+                baseline_cands = 512*3,
+                min_cands = 256,
+                large_pass_mul = 1,
+                token_step_size = 15,
+                tokens_per_pass = 8,
+                upgrade_iter_start = 5,
+                large_pass_freq = 18):
+        self.num_passes = num_passes
+        self.num_large_passes = num_large_passes
+        self.baseline_cands = baseline_cands
+        self.min_cands = min_cands
+        self.large_pass_mul = large_pass_mul
+        self.token_step_size = token_step_size 
+        self.tokens_per_pass = tokens_per_pass 
+        self.upgrade_iter_start = upgrade_iter_start 
+        self.large_pass_freq = large_pass_freq
 
 class BeamSearchConfig:
     # Default values are based on a bayesian optimization parameter search
@@ -43,7 +43,7 @@ class BeamSearchConfig:
                  rating_weight=1.0, clip_weight=2, 
                  enable_upgrades=True,
                  ascii_only=True, add_evolution_beams=False,
-                 device=None):
+                 device=None, verbose=True):
         self.model_beams = model_beams
         self.clip_beams = clip_beams
         self.num_inter_beams = num_inter_beams
@@ -53,6 +53,7 @@ class BeamSearchConfig:
         self.clip_weight = clip_weight
         self.ascii_only = ascii_only
         self.add_evolution_beams = add_evolution_beams
+        self.verbose = verbose
 
         
         
@@ -130,6 +131,7 @@ class BeamSearcher:
 
         if upgrade_config is None:
             upgrade_config = UpgradeConfig()
+        self._default_upgrade_config = upgrade_config
         
     def set_default_search_config(self, config):
         self._default_search_config = config
@@ -141,7 +143,7 @@ class BeamSearcher:
         if search_config is None:
             search_config = self._default_search_config  
         if upgrade_config is None:
-            upgrade_config = self._default_search_config  
+            upgrade_config = self._default_upgrade_config  
 
         self._tokens_model.train(False)
         self._ratings_model.train(False)
@@ -229,8 +231,8 @@ class BeamSearcher:
 
         tokens_added = candidates[0].prev_tokens.size(0)+1
         tokens_since_start = tokens_added - upgrade_config.upgrade_iter_start
-
-        upgrade_top = tokens_since_start < 0 and (tokens_since_start % upgrade_config.tokens_per_pass) == 0
+        num_passes = upgrade_config.num_passes
+        upgrade_top = tokens_since_start > 0 and (tokens_since_start % upgrade_config.tokens_per_pass) == 0
 
         start_idx = (upgrade_config.token_step_size * (tokens_added - upgrade_config.upgrade_iter_start)//upgrade_config.tokens_per_pass) % (tokens_added-1)
         start_idx = max(1, start_idx)
@@ -256,11 +258,11 @@ class BeamSearcher:
             upgrade_top = True
 
         if upgrade_top:
-            print(f"Running {num_passes} upgrade passes on {tokens_added-2} tokens at {num_candidates} from {start_idx} to {end_idx} on top model and clip beams")
-            for top_idx in [top_clip[0], top_beam[0]]:
+            print(f"Running {num_passes} upgrade passes on {tokens_added-2} tokens at {num_candidates} from {start_idx} to {end_idx} on beam with the highest similarity")
+            for top_idx in [top_clip[0]]:
                 orig_beam = next_beam_tokens_full[top_idx]
                 beam_eot_idx = torch.argwhere(orig_beam == _eot_token).view(-1)[0]
-                new_beam = orig_beam.clone
+                new_beam = orig_beam.clone()
 
                 last_score = self._upgrader._calculator.score_tokens(search_state.features, new_beam)[0]
                 for pass_num in range(num_passes):

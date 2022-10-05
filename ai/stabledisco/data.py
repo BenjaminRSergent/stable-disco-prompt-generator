@@ -157,8 +157,8 @@ class PipelineDataset(Dataset):
 
 class DirectTextFeaturesSet(Dataset):
     def __init__(self, features, tokens, start_idx, end_idx, shuffle=True):
-        self._all_features = features.float()
-        self._all_tokens = tokens.long()
+        self._all_features = features
+        self._all_tokens = tokens
 
         self._start_idx = start_idx
         self._end_idx = end_idx
@@ -175,19 +175,18 @@ class DirectTextFeaturesSet(Dataset):
                 torch.randperm(self._end_idx - self._start_idx) + self._start_idx
             )
         else:
-            self._data_idxs = torch.arange(self._start_idx, self._end_idx)
+            self._data_idxs = None
 
     def __len__(self):
         return self._end_idx - self._start_idx
 
     def clear(self):
-        self._all_features = None
-        self._all_tokens = None
+        self._prepare_data()
 
     def __getitem__(self, idx):
-        ret = (self._all_tokens[self._data_idxs[idx]], self._all_features[self._data_idxs[idx]])
+        data_idx = self._data_idxs[idx] if self._data_idxs else idx + self._start_idx
+        ret = (self._all_tokens[data_idx], self._all_features[data_idx])
         if idx == self._end_idx - 1:
-            self.clear()
             self._prepare_data()
 
         return ret
@@ -407,30 +406,39 @@ def get_pipeline_data_loader(
 def get_tokens_to_features(
     text_tokens,
     features,
-    batch_size=100,
+    batch_size=500,
     val_split=0.05,
     shuffle=True,
-    pin_memory=False,
+    pin_memory=True,
 ):
-    tokens = torch.tensor(np.array(text_tokens).astype(np.int32))
-    features = torch.tensor(np.array(features).astype(np.float32))
-    training_idx, val_idx = torchutils.get_split_idxs(tokens.size(0), val_split)
-
+    """
+    if not isinstance(text_tokens, torch.Tensor):
+        text_tokens = torch.tensor(np.array(text_tokens).astype(np.int32))
+        
+    
+    if not isinstance(features, torch.Tensor):
+        features = torch.tensor(np.array(features).astype(np.float32))
+    """     
+    torch.int
+    training_idx, val_idx = torchutils.get_split_idxs(text_tokens.size(0), val_split)
+    
     train_data_set = DirectTextFeaturesSet(
-        tokens,
+        text_tokens,
         features,
         *training_idx,
         shuffle=shuffle,
     )
     if val_split != 0:
         val_data_set = DirectTextFeaturesSet(
-            tokens,
+            text_tokens,
             features,
             *val_idx,
             shuffle=shuffle,
         )
     else:
         val_data_set = None
+        
+    print("Data Loaders")
     train_data_loader = DataLoader(train_data_set, batch_size=batch_size, shuffle=False, pin_memory=pin_memory)
     test_data_loader = DataLoader(val_data_set, batch_size=batch_size, shuffle=False, pin_memory=pin_memory)
     return train_data_loader, test_data_loader
@@ -441,6 +449,7 @@ def get_feature_to_rating_data_loader(
     ratings,
     batch_size=500,
     val_split=0.05,
+    pin_memory=True,
 ):
     if not isinstance(features, torch.Tensor):
         features = torch.tensor(np.array(features).astype(np.float32))
@@ -456,14 +465,15 @@ def get_feature_to_rating_data_loader(
         features, ratings, *val_idx
     )
 
-    train_data_loader = DataLoader(train_data_set, batch_size=batch_size, shuffle=False)
-    test_data_loader = DataLoader(val_data_set, batch_size=batch_size, shuffle=False)
+    train_data_loader = DataLoader(train_data_set, batch_size=batch_size, shuffle=False, pin_memory=pin_memory)
+    test_data_loader = DataLoader(val_data_set, batch_size=batch_size, shuffle=False, pin_memory=pin_memory)
     return train_data_loader, test_data_loader
 
 def get_altered_feature_data_loader(
     features,
     batch_size=500,
     val_split=0.05,
+    pin_memory=True,
 ):
     if not isinstance(features, torch.Tensor):
         features = torch.tensor(np.array(features).astype(np.float32))
@@ -476,52 +486,6 @@ def get_altered_feature_data_loader(
         features, *val_idx
     )
 
-    train_data_loader = DataLoader(train_data_set, batch_size=batch_size, shuffle=False)
-    test_data_loader = DataLoader(val_data_set, batch_size=batch_size, shuffle=False)
-    return train_data_loader, test_data_loader
-
-
-def get_feature_to_tokens_data_loader(
-    prompt_dataframe, vit14_clip_model, batch_size=150, val_split=0.1
-):
-    training_rows = prompt_dataframe[prompt_dataframe["img_features"].notna()]
-    tokens = tuple((torch.tensor(x) for x in training_rows["text_tokens"]))
-    features = tuple((torch.tensor(x) for x in training_rows["img_features"]))
-
-    tokens = torch.stack(tokens)
-    features = torch.stack(features)
-
-    total_data = len(tokens)
-    training_idx, val_idx = torchutils.get_split_idxs(total_data, val_split)
-
-    train_data_set = ImgFeaturesToTokensSet(
-        features, tokens, vit14_clip_model, *training_idx
-    )
-    val_data_set = ImgFeaturesToTokensSet(features, tokens, vit14_clip_model, *val_idx)
-
-    train_data_loader = DataLoader(train_data_set, batch_size=batch_size, shuffle=False)
-    test_data_loader = DataLoader(val_data_set, batch_size=batch_size, shuffle=False)
-    return train_data_loader, test_data_loader
-
-
-def get_direct_feature_to_tokens_data_loader(
-    prompt_dataframe, vit14_clip_model, batch_size=128, val_split=0.1
-):
-    training_rows = prompt_dataframe[prompt_dataframe["img_features"].notna()]
-    tokens = tuple((torch.tensor(x) for x in training_rows["text_tokens"]))
-    features = tuple((torch.tensor(x) for x in training_rows["img_features"]))
-
-    tokens = torch.stack(tokens)
-    features = torch.stack(features)
-
-    total_data = len(tokens)
-    training_idx, val_idx = torchutils.get_split_idxs(total_data, val_split)
-
-    train_data_set = ImgFeaturesToTokensSet(
-        features, tokens, vit14_clip_model, *training_idx
-    )
-    val_data_set = ImgFeaturesToTokensSet(features, tokens, vit14_clip_model, *val_idx)
-
-    train_data_loader = DataLoader(train_data_set, batch_size=batch_size, shuffle=False)
-    test_data_loader = DataLoader(val_data_set, batch_size=batch_size, shuffle=False)
+    train_data_loader = DataLoader(train_data_set, batch_size=batch_size, shuffle=False, pin_memory=pin_memory)
+    test_data_loader = DataLoader(val_data_set, batch_size=batch_size, shuffle=False, pin_memory=pin_memory)
     return train_data_loader, test_data_loader

@@ -16,7 +16,7 @@ def random_prompt_combo(prompts, length=77, device=None):
 
     prompt_tokens = [0 for _ in range(torchconstants.prompt_token_len)]
     prompt_tokens[0] = torchconstants.sot_token
-    prompt_tokens[length] = torchconstants.eot_token
+    prompt_tokens[length-1] = torchconstants.eot_token
     for idx in range(1, length):
         prompt_tokens[idx] = random.choice(tokens_lst)
 
@@ -24,3 +24,4 @@ def random_prompt_combo(prompts, length=77, device=None):
         device = torchutils.get_default_device()
     prompt_tokens = torch.tensor(prompt_tokens, device=device)
 
+    return prompt_tokens

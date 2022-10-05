@@ -91,7 +91,6 @@ class PromptUpgrader:
             if self._verbose:
                 print("Running initial refinement")
 
-            
             step_size = 10
             refine_cnt = candidate_cnt
             for _ in range(3):
@@ -153,6 +152,9 @@ class PromptUpgrader:
             new_tokens, new_best = self._run_upgrade_cycle(target_features, tokens, state.tmp_best_score, num_candidates, state.memory,
                                                            decay_factor=decay_factor, ascii_only=ascii_only, start_idx=start_idx, end_idx=end_idx)
 
+            state.update_tokens_if_better(new_tokens, new_best)
+            
+            new_tokens, new_best = self._swap(target_features, tokens, state.tmp_best_score, start_idx=start_idx, end_idx=end_idx)
             state.update_tokens_if_better(new_tokens, new_best)
 
         return state.get_best()

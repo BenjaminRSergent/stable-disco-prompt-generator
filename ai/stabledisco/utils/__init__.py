@@ -6,4 +6,5 @@ from ai.stabledisco.utils.mathutils import (calc_singular_vecs, cosine_sim,
 from ai.stabledisco.utils.modelutils import (load_clip_model,
                                              load_default_sd_model,
                                              load_sd_model_from_config)
+from ai.stabledisco.utils.promptutils import random_prompt_combo
 from ai.stabledisco.utils.textutils import decode_clip_tokens

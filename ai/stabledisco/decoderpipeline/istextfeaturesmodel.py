@@ -9,7 +9,7 @@ from ai.stabledisco.decoderpipeline.lowerfeaturelayers import \
 
 
 class IsTextFeaturesModel(torchmodules.BaseModel):
-    def __init__(self, base_learning = 1e-4, learning_divisor=6, step_size_up=50000, device=None):
+    def __init__(self, base_learning = 1e-4, learning_divisor=6, step_size_up=20000, device=None):
         super().__init__("IsTextFeatureV2", device=device)
         # Input = (-1, 77, num_features)
         # Output = (-1, 77, vocab_size)
@@ -17,6 +17,18 @@ class IsTextFeaturesModel(torchmodules.BaseModel):
 
         self._transformer_width = sdconsts.feature_width
         self._res_stack = torchlayers.ResDenseStack(sdconsts.feature_width, sdconsts.feature_width*6, layers=4, activation=nn.LeakyReLU, dropout=0.1)
+        
+        dense_stack_units = [(4, 2048),
+                        (4, 4096),
+                        (1, sdconsts.feature_width)]
+                             
+        self._expanding_dense_stack = torchlayers.DenseStack(
+            sdconsts.feature_width,
+            dense_stack_units,
+            activation=nn.LeakyReLU,
+            dropout=0.00,
+        )
+        
 
         dense_stack_units = [(1, 8192),
                              (2, 4096),
@@ -27,7 +39,7 @@ class IsTextFeaturesModel(torchmodules.BaseModel):
             sdconsts.feature_width,
             dense_stack_units,
             activation=nn.LeakyReLU,
-            dropout=0.05,
+            dropout=0.0,
         )
         
         self._prob_out = torch.nn.Linear(self._dense_stack.out_features, 1)
@@ -58,13 +70,14 @@ class IsTextFeaturesModel(torchmodules.BaseModel):
     def forward(self, features):
         features = features / features.norm(dim=-1, keepdim=True)
         x = self._res_stack(features.float())
+        x = self._expanding_dense_stack(x)
         x = self._dense_stack(x)
         return self._prob_out(x)
 
     def get_text_prob(self, features):
         return self._sig(self(features)).reshape(-1)
 
-    def improve_text_prob(self, features, target_prob=0.96, max_diff=0.03, per_step=0.005, alpha=0.95, patience=10, max_divs = 40, verbose=False):
+    def improve_text_prob(self, features, target_prob=0.96, max_diff=0.03, per_step=0.05,  alpha=0.7, max_divs=40, verbose=False):
         # TODO: Extract common code with improve rating
         with torch.no_grad():
             if len(features.shape) == 1:
@@ -82,12 +95,22 @@ class IsTextFeaturesModel(torchmodules.BaseModel):
             prev_prob = before_prob
             con_worse = 0
             num_divs = 0
+            
+            eps_scalar = torch.tensor([1e-33], device=features.device)
             while self.get_text_prob(out_features)[0] <= target_prob and cosine_change < max_diff and num_divs < max_divs:
-                dx = torch.autograd.functional.jacobian(self.get_text_prob, out_features.float(), create_graph=True).reshape(out_features.shape)
+                dx = torch.autograd.functional.jacobian(self.get_text_prob, out_features.float(), create_graph=True).reshape(out_features.shape).float()
 
-                dx_norm = dx / dx.norm(dim=-1, keepdim=True)
-
-                out_features += per_step * dx_norm
+                
+                dx_mag = dx.norm(dim=-1, keepdim=True)
+                if dx_mag < eps_scalar:
+                    dx /= eps_scalar
+                else:
+                    dx /= dx_mag
+                
+                dx_shift = per_step * dx
+                
+                prev_out_features = out_features.clone()
+                out_features += dx_shift
                 out_features = out_features / out_features.norm(dim=-1, keepdim=True)
 
                 mid_prob = self.get_text_prob(out_features)
@@ -95,19 +118,20 @@ class IsTextFeaturesModel(torchmodules.BaseModel):
                     con_worse += 1
                 
 
-                if con_worse > patience:
-                    per_step *= alpha
-                    num_divs += 1
-                    con_worse = 0
                 prev_prob = mid_prob
-
-                
                 cosine_change = abs(1.0 - (features.unsqueeze(0) @ out_features.T))
 
                 if mid_prob > best_out_score and cosine_change < max_diff:
+                    if mid_prob - best_out_score < 1e-5:
+                        per_step /= alpha
                     best_out_score = mid_prob
                     best_out_features = out_features.clone()
-
+                elif cosine_change > max_diff:
+                    out_features = prev_out_features
+                    cosine_change = 0
+                    per_step *= alpha
+                    num_divs += 1
+           
             if verbose:
                 cosine_change = abs(1.0 - (features.unsqueeze(0) @ best_out_features.T))
                 print("End Prob", best_out_score)

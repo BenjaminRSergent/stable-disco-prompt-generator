@@ -14,7 +14,7 @@ _eot_token = clip_tokenizer.encoder["<|endoftext|>"]
 
 class FeaturesToTokensAesModel(torchmodules.BaseModel):
     def __init__(self, clip_model, transformer_width=768, seq_len = 77, vocab_size=49408, heads=12, layers=12, device=None, freeze_lower=False):
-        super().__init__("FeaturesToTokensAesModelV2", device=None)
+        super().__init__("FeaturesToTokensAesModelV2", device=device)
 
         self._ascii_mask = None
         self._dtype = clip_model.dtype
@@ -36,7 +36,7 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
                              (1, self._transformer_width*6),
                              (1, self._transformer_width*8)]
                              
-        self._feature_expander = LowerFeatureLayers(dropout=0.15)
+        self._feature_expander = LowerFeatureLayers(dropout=0.1)
 
         self._seq_expander = torchlayers.LinearWithActivation(
              dense_stack_units[-1][1],
@@ -108,17 +108,17 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
             param.requires_grad = not freeze_lower
         
 
-        base_learning = 1.0e-5
+        base_learning = 8e-5
         self._optimizer = torch.optim.NAdam(
             self.parameters(), base_learning, betas=(0.89, 0.998)
         )
 
         self._scheduler = torch.optim.lr_scheduler.CyclicLR(
             self._optimizer,
-            base_lr=base_learning / 5,
+            base_lr=base_learning / 10,
             max_lr=base_learning,
-            step_size_up=4000,
-            mode="triangular",
+            step_size_up=32000/4,
+            mode="triangular2",
             cycle_momentum=False,
         )
 

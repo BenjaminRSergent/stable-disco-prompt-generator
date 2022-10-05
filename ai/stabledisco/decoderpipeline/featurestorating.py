@@ -6,23 +6,13 @@ import torch.nn as nn
 
 
 class FeaturesToRatingModel(torchmodules.BaseModel):
-    def __init__(self, clip_model, base_learning=2e-4, learning_divisor=10, step_size_up=25500, device=None):
+    def __init__(self, base_learning=2e-4, learning_divisor=10, step_size_up=25500, device=None):
         super().__init__("FeaturesToRatingV5", device=device)
         # Input = (-1, 77, num_features)
         # Output = (-1, 77, vocab_size)
         # Loss = diffable encoding
-        print(clip_model.dtype)
 
-        self._dtype = clip_model.dtype
-
-        self._clip_model = clip_model
-        for param in self._clip_model.parameters():
-            param.requires_grad = False
-
-        clip_state_dict = self._clip_model.state_dict()
-        self._transformer_width = clip_state_dict["ln_final.weight"].shape[0]
-
-        self._res_stack = torchlayers.ResDenseStack(self._transformer_width, self._transformer_width*6, layers=4, activation=nn.LeakyReLU, dropout=0.1)
+        self._res_stack = torchlayers.ResDenseStack(sdconsts.feature_width, sdconsts.feature_width*6, layers=4, activation=nn.LeakyReLU, dropout=0.1)
 
         dense_stack_units = [(1, 8192),
                              (2, 4096),
@@ -30,7 +20,7 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
                              (8, 512)]
                              
         self._dense_stack = torchlayers.DenseStack(
-            self._transformer_width,
+            sdconsts.feature_width,
             dense_stack_units,
             activation=nn.LeakyReLU,
             dropout=0.0,
@@ -92,7 +82,7 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
 
             return top_words, top_ratings
 
-    def improve_rating(self, features, target_rating=15.0, max_diff=0.05, per_step=0.001, verbose=False):
+    def improve_rating(self, features, target_rating=9.0, max_diff=0.05, per_step=0.01,  alpha=0.5, patience=5, max_divs=10, verbose=False):
         with torch.no_grad():
             if len(features.shape) == 1:
                 features = features.view(1, -1)
@@ -102,15 +92,42 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
             cosine_change = 0
             if verbose:
                 print("Start rating", before_rating)
-            while self.get_rating(out_features)[0] <= target_rating and cosine_change < max_diff:
+
+            best_out_features = out_features.clone()
+            best_out_score = before_rating
+
+            prev_rating = before_rating
+            con_worse = 0
+            num_divs = 0
+            while self.get_rating(out_features)[0] <= target_rating and cosine_change < max_diff and num_divs < max_divs:
                 dx = torch.autograd.functional.jacobian(self.get_rating, out_features.float(), create_graph=True).reshape(out_features.shape)
-                out_features += per_step * dx / dx.norm(dim=-1, keepdim=True)
+
+                dx_norm = dx / dx.norm(dim=-1, keepdim=True)
+
+                out_features += per_step * dx_norm
                 out_features = out_features / out_features.norm(dim=-1, keepdim=True)
 
-                cosine_change = abs(1.0 - (features.unsqueeze(0) @ out_features.T))
+                mid_rating = self.get_rating(out_features)
+                if mid_rating < prev_rating:
+                    con_worse += 1
                 
 
+                if con_worse > patience:
+                    per_step *= alpha
+                    num_divs += 1
+                    con_worse = 0
+                prev_rating = mid_rating
+
+                
+                cosine_change = abs(1.0 - (features.unsqueeze(0) @ out_features.T))
+
+                if mid_rating > best_out_score and cosine_change < max_diff:
+                    best_out_score = mid_rating
+                    best_out_features = out_features.clone()
+
             if verbose:
-                print("End Rating", self(out_features))
-                print("Cosine Diff of Improve Features", cosine_change)
-            return out_features.squeeze(0)
+                cosine_change = abs(1.0 - (features.unsqueeze(0) @ best_out_features.T))
+                print("End Rating", best_out_score)
+                print("Cosine Diff of New Features", cosine_change)
+
+            return best_out_features.squeeze(0)
