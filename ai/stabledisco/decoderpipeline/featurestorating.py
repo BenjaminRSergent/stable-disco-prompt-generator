@@ -16,13 +16,13 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
         # Loss = diffable encoding
         
         self._expander = torchlayers.LinearWithActivation(sdconsts.feature_width, sdconsts.feature_width*4,
-                                                          dropout=0.5,
+                                                          dropout=0.2,
                                                           activation=torchlayers.QuickGELU)
         
         self._resblocks = torchlayers.ReducingResDenseStack(sdconsts.feature_width*4,
                                                             num_res_blocks=5, res_unit_mul=2,
                                                             res_layers=3, units_div=3,
-                                                            dropout_div=1.5, start_dropout=0.4,
+                                                            dropout_div=1, start_dropout=0.1,
                                                             activation=nn.LeakyReLU)
         
         self._rating_out = torch.nn.Linear(self._resblocks.out_features, 1)
@@ -47,7 +47,7 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
     def _calc_batch_loss(self, x_inputs, y_targets):
         with torch.autocast(device_type="cuda"):
             outputs = self(x_inputs)
-            return self._loss_func(outputs.view(-1, 1), y_targets.view(-1, 1))
+            return self._loss_func(outputs.view(-1), y_targets.view(-1))
 
     def forward(self, features):
         x = features / features.norm(dim=-1, keepdim=True)

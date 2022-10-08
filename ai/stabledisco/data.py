@@ -187,7 +187,7 @@ class DirectTextFeaturesSet(Dataset):
 
     def __getitem__(self, idx):
         data_idx = self._data_idxs[idx] if self._data_idxs is not None else idx + self._start_idx
-        ret = {"features": self._all_tokens[data_idx], "tokens": self._all_features[data_idx]}
+        ret = ( self._all_tokens[data_idx], self._all_features[data_idx])
         if idx == self._end_idx - 1:
             self._prepare_data()
 

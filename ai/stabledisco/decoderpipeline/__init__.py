@@ -9,6 +9,8 @@ from ai.stabledisco.decoderpipeline.featurestotokensaesres import \
     FeaturesToTokensAesResModel
 from ai.stabledisco.decoderpipeline.istextfeaturesmodel import \
     IsTextFeaturesModel
+from ai.stabledisco.decoderpipeline.knowledgetransfernetwork import \
+    KnowledgeTransferNetwork
 from ai.stabledisco.decoderpipeline.lowerfeaturelayers import \
     LowerFeatureLayers
 from ai.stabledisco.decoderpipeline.promptupgrader import PromptUpgrader

@@ -95,12 +95,17 @@ class FeaturesToTokensAesResModel(torchmodules.BaseModel):
         ).cuda()
         self.register_buffer("_target_mask", target_mask)
 
-    def _calc_batch_loss(self, x_inputs, y_targets):
+    def _calc_batch_loss(self, x_inputs: torch.Tensor, y_targets: torch.Tensor):
         with torch.autocast(device_type="cuda"):
             outputs = self((x_inputs, y_targets))
-            return self._loss_func(
-                outputs.permute(0, 2, 1)[:, :, :-1], y_targets[:, 1:].long()
-            )
+            if y_targets.dtype.is_floating_point:
+                return self._loss_func(
+                outputs.permute(0, 2, 1), y_targets
+                )
+            else:
+                return self._loss_func(
+                    outputs.permute(0, 2, 1)[:, :, :-1], y_targets[:, 1:].long()
+                )
 
     def forward(self, x_inputs):
         latent_img_features, tgt_tokens = x_inputs

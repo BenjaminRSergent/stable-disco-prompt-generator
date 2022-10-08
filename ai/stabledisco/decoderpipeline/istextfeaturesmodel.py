@@ -22,7 +22,7 @@ class IsTextFeaturesModel(torchmodules.BaseModel):
         res_unit_mul = 8
         res_layers = 8
         units_div = 2
-        dropout_div = 2
+        dropout_div = 3
         start_dropout = 0.3
         
         self._resblocks = nn.ModuleList()
