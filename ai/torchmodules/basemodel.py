@@ -1,4 +1,5 @@
 import math
+import os
 import sys
 import time
 
@@ -92,16 +93,31 @@ class BaseModel(nn.Module):
         optimizer = self.get_optimizer()
         return torch.optim.lr_scheduler.StepLR(optimizer, sys.maxsize, gamma=1.0)
 
-    def load_best(self, strict=True):
-        model_path = get_default_path(self.get_save_dir(), "best")
+    def load_weights(self, ckpt_name, strict=True):
+        model_path = get_checkpoint_path(self._name, ckpt_name)
         self.load_state_dict(torch.load(model_path), strict=strict)
 
-    def save_as_best(self):
-        model_path = get_default_path(self.get_save_dir(), "best")
+    def save_weights(self, ckpt_name):
+        model_path = get_checkpoint_path(self._name, ckpt_name)
         torch.save(self.state_dict(), model_path)
 
+    def get_save_dir(self):
+        return get_checkpoint_dir(self._name)
+        
     def get_name(self) -> str:
         return self._name
 
-    def get_save_dir(self) -> str:
-        return get_default_path(f"model/{self._name}")
+
+def save_model(model, model_name, ckpt_name):
+    return torch.save(model, get_checkpoint_path(model_name, ckpt_name))
+
+def load_model(model_name, ckpt_name):
+    return torch.load(get_checkpoint_path(model_name, ckpt_name))
+
+def get_checkpoint_dir(model_name):
+    return get_default_path(f"model/{model_name}")
+
+def get_checkpoint_path(model_name, ckpt_name):
+    checkpoint_dir = get_checkpoint_dir(model_name)
+    print(checkpoint_dir, ckpt_name)
+    return os.path.join(checkpoint_dir, ckpt_name)

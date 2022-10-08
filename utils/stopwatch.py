@@ -21,7 +21,7 @@ class Stopwatch:
     def total(self):
         return self._total
 
-    def print_intervals_ms(self):
+    def print_ms(self):
         print(f"Total time {self.total()} seconds")
         for idx in range(len(self._names) - 1):
             diff = self._lap_times[idx + 1] - self._lap_times[idx]

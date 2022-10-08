@@ -1,5 +1,6 @@
 from enum import Enum
 
+import ai.stabledisco.utils as sdutils
 import ai.torchmodules.data as torchdata
 import ai.torchmodules.utils as torchutils
 import numpy as np
@@ -163,6 +164,7 @@ class DirectTextFeaturesSet(Dataset):
         self._start_idx = start_idx
         self._end_idx = end_idx
         self._shuffle = shuffle
+        self._device = torchutils.get_default_device()
 
         self._data_idxs = None
         # TODO: Add device?
@@ -184,8 +186,8 @@ class DirectTextFeaturesSet(Dataset):
         self._prepare_data()
 
     def __getitem__(self, idx):
-        data_idx = self._data_idxs[idx] if self._data_idxs else idx + self._start_idx
-        ret = (self._all_tokens[data_idx], self._all_features[data_idx])
+        data_idx = self._data_idxs[idx] if self._data_idxs is not None else idx + self._start_idx
+        ret = {"features": self._all_tokens[data_idx], "tokens": self._all_features[data_idx]}
         if idx == self._end_idx - 1:
             self._prepare_data()
 
@@ -201,6 +203,7 @@ class ImgFeaturesToTokensSet(Dataset):
         self._start_idx = start_idx
         self._end_idx = end_idx
         self._shuffle = shuffle
+        self._device = torchutils.get_default_device()
 
         self._curr_text_tokens = None
         self._curr_image_features = None
@@ -239,7 +242,7 @@ class ImgFeaturesToTokensSet(Dataset):
     def __getitem__(self, idx):
         if self._curr_image_features is None:
             self._prepare_data()
-        ret = (self._curr_image_features[idx], self._curr_text_tokens[idx])
+        ret = (self._curr_image_features[idx].to(self._device, non_blocking=True), self._curr_text_tokens[idx].to(self._device, non_blocking=True))
         if idx == self._end_idx - 1:
             self.clear()
 
@@ -296,7 +299,7 @@ class AlteredFeaturesSet(Dataset):
         self._end_idx = end_idx
         self._shuffle = shuffle
         self._feature_width = feature_width
-        self.data_idxs = None
+        self._data_idxs = None
 
         if device is None:
             device = torchutils.get_default_device()
@@ -314,24 +317,20 @@ class AlteredFeaturesSet(Dataset):
             )
         else:
             self._data_idxs = torch.arange(self._start_idx, self._end_idx)
+            
 
     def clear(self):
         self._data_idxs = None
 
-    def _make_rand_shift(self):
-        shift = torch.randn((self._feature_width))
+
+    def _make_rand_shift(self, cnt=1):
+        shift = torch.randn((cnt, 768))
         shift /= shift.norm(dim=-1, keepdim=True)
-        scale = self._random_scale()
-        return scale * shift
+        scale = self._random_scale(cnt).float()
+        return scale, (scale * shift).view(-1)
 
-    def _random_scale(self, mean=0.0, std=0.5, min_scale=0.05):
-        scale = torch.abs(torch.rand(1) * std + mean) + min_scale
-        if scale <= 0:
-            scale += min_scale
-        else:
-            scale -= min_scale
-
-        return scale
+    def _random_scale(self, cnt=1, mean=0.025, std=0.25, min_scale=0.05):
+        return torch.abs(torch.randn((cnt, 1), dtype=torch.float) * std + mean) + min_scale
 
     def __len__(self):
         return (self._end_idx - self._start_idx)*2
@@ -341,20 +340,17 @@ class AlteredFeaturesSet(Dataset):
             self._prepare_data()
         
         with torch.no_grad():
+            features = self._get_features_for_idx(idx)
+            scale = 0.0
             if idx % 2 == 1:
                 features = self._last_features
                 if features == None:
                     features = self._get_features_for_idx(idx)
-
-                rand_shift = self._make_rand_shift()
-                
-                features = features + rand_shift
+                scale, shift = sdutils.make_random_feature_shifts()
+                features = features + shift
                 features /= features.norm(dim=-1, keepdim=True)
-            else:
-                features = self._get_features_for_idx(idx)
-                self._last_features = features
         
-        ret = (features, self._is_text[idx%2])
+        ret = (features.float(), scale)
         if idx//2 == self._end_idx - 1:
             self.clear()
 
@@ -408,6 +404,7 @@ def get_tokens_to_features(
     features,
     batch_size=500,
     val_split=0.05,
+    num_workers=8,
     shuffle=True,
     pin_memory=True,
 ):
@@ -439,8 +436,8 @@ def get_tokens_to_features(
         val_data_set = None
         
     print("Data Loaders")
-    train_data_loader = DataLoader(train_data_set, batch_size=batch_size, shuffle=False, pin_memory=pin_memory)
-    test_data_loader = DataLoader(val_data_set, batch_size=batch_size, shuffle=False, pin_memory=pin_memory)
+    train_data_loader = DataLoader(train_data_set, batch_size=batch_size, shuffle=False, pin_memory=pin_memory, num_workers=num_workers)
+    test_data_loader = DataLoader(val_data_set, batch_size=batch_size, shuffle=False, pin_memory=pin_memory, num_workers=num_workers)
     return train_data_loader, test_data_loader
 
 
@@ -450,6 +447,7 @@ def get_feature_to_rating_data_loader(
     batch_size=500,
     val_split=0.05,
     pin_memory=True,
+    num_workers=8,
 ):
     if not isinstance(features, torch.Tensor):
         features = torch.tensor(np.array(features).astype(np.float32))
@@ -465,14 +463,15 @@ def get_feature_to_rating_data_loader(
         features, ratings, *val_idx
     )
 
-    train_data_loader = DataLoader(train_data_set, batch_size=batch_size, shuffle=False, pin_memory=pin_memory)
-    test_data_loader = DataLoader(val_data_set, batch_size=batch_size, shuffle=False, pin_memory=pin_memory)
+    train_data_loader = DataLoader(train_data_set, batch_size=batch_size, shuffle=False, pin_memory=pin_memory, num_workers=num_workers)
+    test_data_loader = DataLoader(val_data_set, batch_size=batch_size, shuffle=False, pin_memory=pin_memory, num_workers=num_workers)
     return train_data_loader, test_data_loader
 
 def get_altered_feature_data_loader(
     features,
     batch_size=500,
     val_split=0.05,
+    num_workers=8,
     pin_memory=True,
 ):
     if not isinstance(features, torch.Tensor):
@@ -486,6 +485,6 @@ def get_altered_feature_data_loader(
         features, *val_idx
     )
 
-    train_data_loader = DataLoader(train_data_set, batch_size=batch_size, shuffle=False, pin_memory=pin_memory)
-    test_data_loader = DataLoader(val_data_set, batch_size=batch_size, shuffle=False, pin_memory=pin_memory)
+    train_data_loader = DataLoader(train_data_set, batch_size=batch_size, shuffle=False, pin_memory=pin_memory, num_workers=num_workers)
+    test_data_loader = DataLoader(val_data_set, batch_size=batch_size, shuffle=False, pin_memory=pin_memory, num_workers=num_workers)
     return train_data_loader, test_data_loader

@@ -64,7 +64,6 @@ class LinearWithActivation(nn.Module):
         output_size,
         batch_norm_type=Normalization.NormType.BATCH,
         activation="QuickGELU",
-        inplace=False,
         dropout=0.20,
     ):
         super().__init__()

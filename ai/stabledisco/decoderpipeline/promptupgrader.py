@@ -1,7 +1,7 @@
 import random
 import re
 
-import ai.torchmodules.utils as torchutils
+import ai.stabledisco.utils as sdutils
 import clip
 import torch
 from ai.stabledisco.decoderpipeline.promptmetrics import \
@@ -36,7 +36,7 @@ class PromptUpgrader:
             self.tmp_best_score = self.curr_best_score
 
         def get_end_idx(self):
-            return torch.argwhere(self.tmp_best_tokens == _eot_token).view(-1)[0]
+            return sdutils.find_end_idx(self.tmp_best_tokens)
 
         def get_best(self):
             return self.best_tokens, self.curr_best_score

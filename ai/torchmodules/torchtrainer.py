@@ -130,7 +130,7 @@ class TorchTrainer:
                     f"{idx:5d}/{len(data_loader):5d} batches | "
                     f"batch/sec {batch_per_sec:5.2f} | "
                     f"rem mins {rem_time/60:5.0f} | "
-                    f"loss {cur_loss:5.4f} | ppl {ppl:8.4f}"
+                    f"loss {cur_loss:5.5f} | ppl {ppl:8.4f}"
                 )
                 if print_learning_rate:
                     print(f"Learning rate: {scheduler.get_last_lr()}")

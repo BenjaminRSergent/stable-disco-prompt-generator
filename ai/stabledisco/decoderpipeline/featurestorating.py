@@ -1,48 +1,48 @@
 import ai.stabledisco.constants as sdconsts
 import ai.torchmodules as torchmodules
 import ai.torchmodules.layers as torchlayers
+import ai.torchmodules.scheduler as torchscheduler
 import torch
 import torch.nn as nn
 
 
 class FeaturesToRatingModel(torchmodules.BaseModel):
-    def __init__(self, base_learning=2e-4, learning_divisor=10, step_size_up=25500, device=None):
-        super().__init__("FeaturesToRatingV5", device=device)
+    name = "FeaturesToRatingV8"
+    # TODO: Decouple learning rate scheduler
+    def __init__(self, max_lr=2e-4, min_lr_divisor=20, epoch_batches=8214, step_size_up_epoch_mul=0.5, warmup_period_epoch_mul=2, gamma=0.75, last_epoch=-1, device=None):
+        super().__init__(FeaturesToRatingModel.name, device=device)
         # Input = (-1, 77, num_features)
         # Output = (-1, 77, vocab_size)
         # Loss = diffable encoding
-
-        self._res_stack = torchlayers.ResDenseStack(sdconsts.feature_width, sdconsts.feature_width*6, layers=4, activation=nn.LeakyReLU, dropout=0.1)
-
-        dense_stack_units = [(1, 8192),
-                             (2, 4096),
-                             (5, 1024),
-                             (8, 512)]
-                             
-        self._dense_stack = torchlayers.DenseStack(
-            sdconsts.feature_width,
-            dense_stack_units,
-            activation=nn.LeakyReLU,
-            dropout=0.0,
-        )
         
-        self._rating_lin = torch.nn.Linear(self._dense_stack.out_features, 1)
-        nn.init.xavier_uniform_(self._rating_lin.weight)
+        self._expander = torchlayers.LinearWithActivation(sdconsts.feature_width, sdconsts.feature_width*4,
+                                                          dropout=0.5,
+                                                          activation=torchlayers.QuickGELU)
+        
+        self._resblocks = torchlayers.ReducingResDenseStack(sdconsts.feature_width*4,
+                                                            num_res_blocks=5, res_unit_mul=2,
+                                                            res_layers=3, units_div=3,
+                                                            dropout_div=1.5, start_dropout=0.4,
+                                                            activation=nn.LeakyReLU)
+        
+        self._rating_out = torch.nn.Linear(self._resblocks.out_features, 1)
+        nn.init.xavier_uniform_(self._rating_out.weight)
 
         self._loss_func = nn.MSELoss()
 
         self._optimizer = torch.optim.NAdam(
-            self.parameters(), base_learning, betas=(0.88, 0.995)
+            self.parameters(), max_lr, betas=(0.88, 0.995)
         )
-
-        self._scheduler = torch.optim.lr_scheduler.CyclicLR(
-            self._optimizer,
-            base_lr=base_learning / learning_divisor,
-            max_lr=base_learning,
-            step_size_up=step_size_up,
-            mode="triangular2",
-            cycle_momentum=False,
-        )
+        
+        self._scheduler = torchscheduler.make_cyclic_with_warmup(optimizer=self._optimizer,
+                                                                 epoch_batches=epoch_batches,
+                                                                 max_lr=max_lr,
+                                                                 min_lr_divisor=min_lr_divisor,
+                                                                 step_size_up_epoch_mul=step_size_up_epoch_mul,
+                                                                 warmup_period_epoch_mul=warmup_period_epoch_mul,
+                                                                 gamma=gamma,
+                                                                 last_epoch=last_epoch,
+                                                                 cycle_momentum=False)
 
     def _calc_batch_loss(self, x_inputs, y_targets):
         with torch.autocast(device_type="cuda"):
@@ -50,10 +50,10 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
             return self._loss_func(outputs.view(-1, 1), y_targets.view(-1, 1))
 
     def forward(self, features):
-        features = features / features.norm(dim=-1, keepdim=True)
-        x = self._res_stack(features)
-        x = self._dense_stack(x)
-        return self._rating_lin(x)
+        x = features / features.norm(dim=-1, keepdim=True)
+        x = self._expander(x)
+        x = self._resblocks(x)
+        return self._rating_out(x)
 
     def get_rating(self, features):
         return self(features).reshape(1)
