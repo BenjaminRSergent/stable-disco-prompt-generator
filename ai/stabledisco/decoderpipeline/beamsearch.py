@@ -73,6 +73,7 @@ class BeamSearcher:
 
             self.total_beams = config.model_beams + config.clip_beams
             self.best_match_cosine = torch.tensor(0, device=config.device)
+            self.iter_without_improvement = 0
             self.config = config
             self.upgrade_config = upgrade_config
             self.iter_num = 0
@@ -157,9 +158,10 @@ class BeamSearcher:
 
             tokens_to_find = min(max_len, self._tokens_model._seq_len - 2)
             for _ in range(tokens_to_find):
+                    
                 self._do_beam_search_step(search_state)
 
-                if verbose and search_state.iter_num % 5 == 0:
+                if verbose and search_state.iter_num % 1 == 0:
                     self._print_search_state(search_state)
                     
                 search_state.iter_num += 1
@@ -211,8 +213,7 @@ class BeamSearcher:
         
         
         search_state.curr_beams = []
-        if search_state.config.enable_upgrades:
-            self._upgrade_top(search_state, candidates, top_clip_idxs, top_beam, next_beam_tokens_full)
+        self._upgrade_top(search_state, candidates, top_clip_idxs, top_beam, next_beam_tokens_full)
 
         top_idxs = top_clip+top_beam
         # Append the choosen tokens to their parent beam for the next iteration
@@ -230,8 +231,10 @@ class BeamSearcher:
         tokens_added = candidates[0].prev_tokens.size(0)+1
         tokens_since_start = tokens_added - upgrade_config.upgrade_iter_start
         num_passes = upgrade_config.num_passes
-        upgrade_top = tokens_since_start > 0 and (tokens_since_start % upgrade_config.tokens_per_pass) == 0
-
+        #upgrade_top = tokens_since_start > 0 and (tokens_since_start % upgrade_config.tokens_per_pass) == 0
+        upgrade_top = search_state.iter_without_improvement > 0
+        
+        
         start_idx = (upgrade_config.token_step_size * tokens_since_start//upgrade_config.tokens_per_pass) % (tokens_added-1)
         start_idx = max(1, start_idx)
 
@@ -260,8 +263,9 @@ class BeamSearcher:
         top_beam = top_beam[0]
         cosine_sim = torch.tensor(cosine_sim[0], device= top_beam.device)
 
-        if upgrade_top:
-            print(f"Running {num_passes} upgrade passes on {tokens_added-2} tokens at {num_candidates} from {start_idx} to {end_idx} on beam with the highest similarity")
+        orig_candidates = num_candidates
+        if upgrade_top and search_state.config.enable_upgrades:
+            #print(f"Running up to {num_passes} upgrade passes on {tokens_added-2} tokens at {num_candidates} from {start_idx} to {end_idx} on beam with the highest similarity")
         
             orig_beam = top_beam
             beam_eot_idx = sdutils.find_end_idx(orig_beam)
@@ -271,19 +275,27 @@ class BeamSearcher:
             for pass_num in range(num_passes):
                 new_beam, new_score = self._upgrader.single_upgrade_pass(search_state.features, new_beam, start_idx=start_idx, end_idx=end_idx,
                                                                         num_candidates=num_candidates, ascii_only=search_state.config.ascii_only,
-                                                                        decay_factor=0.85)
+                                                                        decay_factor=0.85, verbose=False)
+                
+                
                 if (new_score - last_score) < 1e-2:
-                    print(f"No change in score on pass {pass_num} finishing upgrade")
-                    break
-
+                    if num_candidates == orig_candidates:
+                        num_candidates *= 16
+                        #print(f"No change in score on pass {pass_num}, doubling candidates")
+                    else:
+                        #print(f"No change in score on pass {pass_num} finishing upgrade")
+                        break
+                elif num_candidates != orig_candidates:
+                    num_candidates //= 16
+                    
                 if search_state.config.verbose:
-                    print(f"Pass {pass_num} increased score from {last_score:0.3f} to {new_score:0.3f}")
+                    #print(f"Pass {pass_num} increased score from {last_score:0.3f} to {new_score:0.3f}")
                     last_score = new_score
 
             upgraded_features = self._clip_model.features_from_tokens(new_beam.view(1, -1))
-            upgraded_sim = self._clip_model.cosine_similarity(search_state.features, upgraded_features)[0]
-            if upgraded_sim > search_state.best_match_cosine:
-                search_state.best_match_cosine = upgraded_sim
+            cosine_sim = self._clip_model.cosine_similarity(search_state.features, upgraded_features)[0]
+            if cosine_sim > search_state.best_match_cosine:
+                search_state.best_match_cosine = cosine_sim
                 search_state.final_beam_tokens.append(new_beam)
 
             
@@ -293,17 +305,23 @@ class BeamSearcher:
                 orig_rating = self._ratings_model(orig_features)[0].item()
 
                 upgraded_rating = self._ratings_model(upgraded_features)[0].item()
-                print(f"Upgraded changed cosine sim from {orig_sim} to {upgraded_sim: 0.3f} and estimated quality from {orig_rating: 0.3f} to {upgraded_rating: 0.3f}:\n {self._tokens_model.decode(new_beam)[0]}")
+                print(f"Upgraded changed cosine sim from {orig_sim} to {cosine_sim: 0.3f} and estimated quality from {orig_rating: 0.3f} to {upgraded_rating: 0.3f}:\n {self._tokens_model.decode(new_beam)[0]}")
 
+            top_beam = new_beam
             new_beam = new_beam[:beam_eot_idx]
             
             search_state.curr_beams.append((candidates[top_beam_idxs[0]].prob, new_beam.clone()))
 
             search_state.times_upgraded += 1
+
+        if cosine_sim > search_state.best_match_cosine:
+            search_state.best_match_cosine = cosine_sim
+            search_state.final_beam_tokens.append(top_beam)
+            search_state.iter_without_improvement = 0
         else:
-            if cosine_sim > search_state.best_match_cosine:
-                search_state.best_match_cosine = cosine_sim
-                search_state.final_beam_tokens.append(top_beam)
+            search_state.iter_without_improvement += 1
+                
+            print("without", search_state.iter_without_improvement)
 
     def _get_candidate_beams(self, search_state):
         # Get the model's estimate for the next token's probability for each beam
