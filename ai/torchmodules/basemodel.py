@@ -108,11 +108,11 @@ class BaseModel(nn.Module):
         return self._name
 
 
-def save_model(model, model_name, ckpt_name):
-    return torch.save(model, get_checkpoint_path(model_name, ckpt_name))
+def save_model(model, model_name, ckpt_name, **kwargs):
+    return torch.save(model, get_checkpoint_path(model_name, ckpt_name), **kwargs)
 
-def load_model(model_name, ckpt_name):
-    return torch.load(get_checkpoint_path(model_name, ckpt_name))
+def load_model(model_name, ckpt_name, **kwargs):
+    return torch.load(get_checkpoint_path(model_name, ckpt_name), **kwargs)
 
 def get_checkpoint_dir(model_name):
     return get_default_path(f"model/{model_name}")

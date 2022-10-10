@@ -21,7 +21,6 @@ def calc_singular_vecs(features, cutoff=0.9, largest=True):
 
     for idx in loop_range:
         if (largest and svd.S[idx] > cutoff) or (not largest and svd.S[idx] < cutoff):
-            print(svd.S)[idx]
             ret += svd.S[idx]*svd.Vh[idx]
         else:
             break

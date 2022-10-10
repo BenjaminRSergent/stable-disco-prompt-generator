@@ -48,6 +48,8 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         super().__init__(FeaturesToTokensAesModel.name+name_suffix, device=device)
 
         self._ascii_mask = None
+        self._banned_mask = None
+        self._bool_to_mask = {}
         self._dtype = clip_model.dtype
 
         self._clip_model = clip_model
@@ -238,7 +240,8 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
 
         return texts
 
-    def get_next_probs(self, memory, curr_tokens, ascii_only=True):
+    # TODO: custom mask
+    def get_next_probs(self, memory, curr_tokens, ascii_only=True, no_banned=True, custom_mask=None):
         num_batch = curr_tokens.size(0)
         size = curr_tokens.size(1)
         if size == self._seq_len - 1:
@@ -262,50 +265,55 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         vocab_out = self._vocab_out(decoder_out[:, -1])
 
         probs = torch.softmax(vocab_out, dim=-1)
-        if ascii_only:
-            probs *= self._get_ascii_mask()
-        else:
-            print("Asked for non-ascii!")
-            raise Exception()
-        
+        if custom_mask:
+            probs *= custom_mask
+        elif ascii_only or no_banned:
+            probs *= self.get_mask(ascii_only, no_banned)
+            
         probs[:, -1] = 0
         probs[:, -2] = 0
 
         return probs
 
-    def _get_ascii_mask(self):
-        if self._ascii_mask is None:
-            print("\n\n\n\n\n\n\n")
-            self._ascii_mask = torch.ones(len(clip_tokenizer.encoder), device="cuda")
-            
-            r"""
-            norm_char_regex = re.compile(
-                r"^[a-zA-Z0-9 ,\.!\"\'\?():;_-{|}<=>]*$"
-            )
-            alphanum_regex = re.compile(
-                r"^[a-zA-Z0-9 ]*$"
-            )
-            
-            norm_char_regex = re.compile(
-                r"^[a-zA-Z0-9 !\"#$%&'()*+,\-./:;<=>?@[\]^_`{|}~\\]*$"
-            )
-            """
-            norm_char_regex = re.compile(
-                r"^[a-zA-Z0-9#\$=+%@\^ ,\.!\"\'\?():;_-{|}<=>]*$"
-            )
-            num_ascii = 0
-            for token in clip_tokenizer.decoder.keys():
-                text = clip_tokenizer.decode([token])
-                #is_ascii = norm_char_regex.match(text) and text[-1] == ' '
-                is_ascii = ' ' in text[-1] and (norm_char_regex.match(text) is not None)
+    def get_mask(self, ascii_only, no_banned):
+        mask_key = self.get_mask_key(ascii_only, no_banned)
+        if mask_key in self._mask_dict:
+            return self._mask_dict[mask_key]
+        
+        self._mask_dict[self.get_mask_key(ascii_only=False, no_banned=False)] = torch.ones(len(clip_tokenizer.encoder), device="cuda")
+        
+        print("Creating ascii mask")
+        ascii_mask = torch.ones(len(clip_tokenizer.encoder), device="cuda")
+        norm_char_regex = re.compile(
+            r"^[a-zA-Z0-9#\$=+%@\^ ,\.!\"\'\?():;_-{|}<=>]*$"
+        )
+        num_ascii = 0
+        for token in clip_tokenizer.decoder.keys():
+            text = clip_tokenizer.decode([token])
+            #is_ascii = norm_char_regex.match(text) and text[-1] == ' '
+            is_ascii = ' ' in text[-1] and (norm_char_regex.match(text) is not None)
 
-                if is_ascii:
-                    num_ascii += 1
-                else:
-                    self._ascii_mask[token] = 0
-
-            print("Total ", num_ascii)
-        return self._ascii_mask
+            if is_ascii:
+                num_ascii += 1
+            else:
+                ascii_mask[token] = 0
+        print("Total ascii", num_ascii)
+        
+        self._mask_dict[self.get_mask_key(ascii_only=True, no_banned=False)] = ascii_mask
+        
+        banned_mask = torch.ones(len(clip_tokenizer.encoder), device="cuda")
+        banned_words = ["nude", "naked", "kid", "child", "lolita", "cum", "xxx", "anus"]
+        for word in banned_words:
+            banned_mask[clip_tokenizer.encoder[word + '</w>']] = 0
+            
+        self._mask_dict[self.get_mask_key(ascii_only=False, no_banned=True)] = banned_mask 
+        self._mask_dict[self.get_mask_key(ascii_only=True, no_banned=True)] = banned_mask * ascii_mask
+            
+        return self._mask_dict[mask_key]
+    
+    @staticmethod
+    def get_mask_key(ascii_only, no_banned):
+        return (ascii_only, no_banned)
 
 
 def add_token_and_end(curr_tokens, new_token, max_size=77):
