@@ -214,8 +214,8 @@ class BeamSearcher:
         
         search_state.curr_beams = []
         self._upgrade_top(search_state, candidates, top_clip_idxs, top_beam, next_beam_tokens_full)
-
-        top_idxs = top_clip+top_beam
+        # TODO: profile unquie versus doing duplicates
+        top_idxs = torch.unique(torch.cat((top_clip,top_beam))).cpu().tolist()
         # Append the choosen tokens to their parent beam for the next iteration
         for top_idx in top_idxs:
             prob = candidates[top_idx].prob
@@ -235,7 +235,7 @@ class BeamSearcher:
         upgrade_top = search_state.iter_without_improvement > 0
         
         
-        start_idx = (upgrade_config.token_step_size * tokens_since_start//upgrade_config.tokens_per_pass) % (tokens_added-1)
+        start_idx = (upgrade_config.token_step_size * search_state.times_upgraded) % (tokens_added-1)
         start_idx = max(1, start_idx)
 
         if start_idx < upgrade_config.token_step_size:
@@ -263,65 +263,91 @@ class BeamSearcher:
         top_beam = top_beam[0]
         cosine_sim = torch.tensor(cosine_sim[0], device= top_beam.device)
 
-        orig_candidates = num_candidates
-        if upgrade_top and search_state.config.enable_upgrades:
-            #print(f"Running up to {num_passes} upgrade passes on {tokens_added-2} tokens at {num_candidates} from {start_idx} to {end_idx} on beam with the highest similarity")
         
-            orig_beam = top_beam
-            beam_eot_idx = sdutils.find_end_idx(orig_beam)
-            new_beam = orig_beam.clone()
+        upgrade_top = cosine_sim - search_state.best_match_cosine <= self._epsilon
+        cands_mul = 4
+        min_cands = num_candidates
+        max_cands = min_cands * cands_mul ** 2
+        first_pass = max_cands * 1.5
+        num_candidates = first_pass 
+        con_improve = 0
+        con_improve_to_div = 2
+        
+        times_wrapped = 0
+        max_wraps = 4
+        if upgrade_top and search_state.config.enable_upgrades:
+            to_upgrade = [top_clip_idxs[0]]
 
-            last_score = self._upgrader._calculator.score_tokens(search_state.features, new_beam)[0]
-            for pass_num in range(num_passes):
-                new_beam, new_score = self._upgrader.single_upgrade_pass(search_state.features, new_beam, start_idx=start_idx, end_idx=end_idx,
-                                                                        num_candidates=num_candidates, ascii_only=search_state.config.ascii_only,
-                                                                        decay_factor=0.85, verbose=False)
+            if top_clip_idxs[0] != top_beam_idxs[0]:
+                to_upgrade.append(top_beam_idxs[0])
+
+            for idx in to_upgrade:#, top_beam_idxs[0]]:
+            
+                orig_beam = top_beam
+                beam_eot_idx = sdutils.find_end_idx(orig_beam)
+                new_beam = orig_beam.clone()
+
+                last_score = self._upgrader._calculator.score_tokens(search_state.features, new_beam)[0]
+                for pass_num in range(num_passes):
+                    print(f"Running up to {num_passes} upgrade passes on {tokens_added-2} tokens at {num_candidates} from {start_idx} to {end_idx} on beam with the highest similarity. div {con_improve}")
+                    new_beam, new_score = self._upgrader.single_upgrade_pass(search_state.features, new_beam, start_idx=start_idx, end_idx=end_idx,
+                                                                            num_candidates=int(num_candidates), ascii_only=search_state.config.ascii_only,
+                                                                            decay_factor=0.85)
+                    if (new_score - last_score) < self._epsilon:
+                        con_improve = 0
+                        if num_candidates < max_cands:
+                            num_candidates *= cands_mul
+                        else:
+                            times_wrapped += 1
+                            if times_wrapped >= max_wraps:
+                                break
+                            else:
+                                num_candidates = first_pass 
+                                start_idx += upgrade_config.token_step_size
+                                end_idx += upgrade_config.token_step_size
+                                if start_idx >= tokens_added:
+                                    start_idx -= tokens_added
+                                    end_idx -= tokens_added
+                                     
+                    elif num_candidates > max_cands:
+                        num_candidates = min_cands
+                    elif num_candidates > min_cands:
+                        con_improve += 1
+                        if con_improve >= con_improve_to_div:
+                            con_improve = 0
+                            num_candidates = max(min_cands, num_candidates//cands_mul)
+                        
+                    if search_state.config.verbose:
+                        print(f"Pass {pass_num} increased score from {last_score:0.3f} to {new_score:0.3f}")
+                        last_score = new_score
+
+                upgraded_features = self._clip_model.features_from_tokens(new_beam.view(1, -1))
+                cosine_sim = self._clip_model.cosine_similarity(search_state.features, upgraded_features)[0]
+                if cosine_sim > search_state.best_match_cosine:
+                    search_state.best_match_cosine = cosine_sim
+                    search_state.final_beam_tokens.append(new_beam)
+
                 
-                
-                if (new_score - last_score) < 1e-2:
-                    if num_candidates == orig_candidates:
-                        num_candidates *= 16
-                        #print(f"No change in score on pass {pass_num}, doubling candidates")
-                    else:
-                        #print(f"No change in score on pass {pass_num} finishing upgrade")
-                        break
-                elif num_candidates != orig_candidates:
-                    num_candidates //= 16
-                    
                 if search_state.config.verbose:
-                    #print(f"Pass {pass_num} increased score from {last_score:0.3f} to {new_score:0.3f}")
-                    last_score = new_score
+                    orig_features = self._clip_model.features_from_tokens(orig_beam.view(1, -1))
+                    orig_sim = self._clip_model.cosine_similarity(search_state.features, orig_features)[0]
+                    orig_rating = self._ratings_model(orig_features)[0].item()
 
-            upgraded_features = self._clip_model.features_from_tokens(new_beam.view(1, -1))
-            cosine_sim = self._clip_model.cosine_similarity(search_state.features, upgraded_features)[0]
-            if cosine_sim > search_state.best_match_cosine:
-                search_state.best_match_cosine = cosine_sim
-                search_state.final_beam_tokens.append(new_beam)
+                    upgraded_rating = self._ratings_model(upgraded_features)[0].item()
+                    print(f"Upgraded changed cosine sim from {orig_sim} to {cosine_sim: 0.3f} and estimated quality from {orig_rating: 0.3f} to {upgraded_rating: 0.3f}:\n {self._tokens_model.decode(new_beam)[0]}")
 
-            
-            if search_state.config.verbose:
-                orig_features = self._clip_model.features_from_tokens(orig_beam.view(1, -1))
-                orig_sim = self._clip_model.cosine_similarity(search_state.features, orig_features)[0]
-                orig_rating = self._ratings_model(orig_features)[0].item()
-
-                upgraded_rating = self._ratings_model(upgraded_features)[0].item()
-                print(f"Upgraded changed cosine sim from {orig_sim} to {cosine_sim: 0.3f} and estimated quality from {orig_rating: 0.3f} to {upgraded_rating: 0.3f}:\n {self._tokens_model.decode(new_beam)[0]}")
-
-            top_beam = new_beam
-            new_beam = new_beam[:beam_eot_idx]
-            
-            search_state.curr_beams.append((candidates[top_beam_idxs[0]].prob, new_beam.clone()))
+                top_beam = new_beam
+                new_beam = new_beam[:beam_eot_idx]
+                
+                search_state.curr_beams.append((candidates[idx].prob, new_beam.clone()))
 
             search_state.times_upgraded += 1
-
+            
+            search_state.iter_without_improvement = -1
+            
         if cosine_sim > search_state.best_match_cosine:
             search_state.best_match_cosine = cosine_sim
             search_state.final_beam_tokens.append(top_beam)
-            search_state.iter_without_improvement = 0
-        else:
-            search_state.iter_without_improvement += 1
-                
-            print("without", search_state.iter_without_improvement)
 
     def _get_candidate_beams(self, search_state):
         # Get the model's estimate for the next token's probability for each beam
@@ -402,10 +428,12 @@ class BeamSearcher:
 
     def _get_top_idxs(self, search_state, top_clip_idxs):
         _, top_beam_idxs = search_state.next_beam_scores.topk(search_state.config.model_beams, dim=-1)
+        
+        unique_cnt = torch.unique(torch.cat((top_beam_idxs, top_clip_idxs[:search_state.config.clip_beams]))).size(0)
+        
+        overlap = search_state.config.clip_beams+search_state.config.model_beams-unique_cnt
 
-        top_clip_idxs = top_clip_idxs.cpu().tolist()
-        top_clip_idxs = [idx for idx in top_clip_idxs if idx not in top_beam_idxs][:search_state.config.clip_beams]
-        return top_clip_idxs, top_beam_idxs.cpu().tolist()
+        return top_clip_idxs[:search_state.config.clip_beams+overlap], top_beam_idxs
 
     def _get_final_tokens(self, search_state, topk):
         topk = min(topk, len(search_state.final_beam_tokens))
@@ -419,12 +447,13 @@ class BeamSearcher:
         best_features = self._clip_model.features_from_tokens(search_state.final_beam_tokens[-1].view(1, -1))
         rating = self._ratings_model(best_features)[0].item()
         
-        """
-        Check for retokenization inconsistencies. This can occur when multiple token sequences can represent the same prompt
+        
+        #Check for retokenization inconsistencies. This can occur when multiple token sequences can represent the same prompt
         orig = self._clip_model.cosine_similarity(search_state.features, [search_state.final_beam_tokens[-1]])[0]
 
         telephone_tokens = clip.tokenize(self._tokens_model.decode(search_state.final_beam_tokens[-1]))[0].cuda()
         telephone = self._clip_model.cosine_similarity(search_state.features, [telephone_tokens])[0]
+        """
         print(f"Cosine telephone {search_state.best_match_cosine: 0.4f} recalc {orig:0.4f} to {telephone: 0.4f}")
         print("Tokens pre", search_state.final_beam_tokens[-1])
         print("Tokens post", telephone_tokens)

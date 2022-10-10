@@ -5,14 +5,42 @@ import ai.torchmodules.scheduler as torchscheduler
 import ai.torchmodules.utils as torchutils
 import torch
 import torch.nn as nn
+from ai.stabledisco.decoderpipeline.knowledgetransfernetwork import \
+    KnowledgeTransferNetwork
 from ai.stabledisco.decoderpipeline.lowerfeaturelayers import \
     LowerFeatureLayers
 
 
 class IsTextFeaturesModel(torchmodules.BaseModel):
     name = "IsTextFeatureV3"
-    def __init__(self, max_lr=2e-4, min_lr_divisor=20, epoch_batches=32000, step_size_up_epoch_mul=0.5, warmup_period_epoch_mul=2, gamma=0.75, last_epoch=-1, device=None):
-        super().__init__(IsTextFeaturesModel.name, device=device)
+    
+    @staticmethod
+    def build_teacher(**kwargs):
+        return IsTextFeaturesModel(*kwargs)
+    
+    @staticmethod
+    def build_student(**kwargs):
+        return IsTextFeaturesModel(name_suffix='Student', res_unit_mul=2, res_layers=2, start_dropout=0.2, *kwargs)
+    
+    
+    @staticmethod
+    def build_knowledge_transfer_model(teacher=None, epoch_batches=34200, teacher_checkpoint="best", **kwargs):
+        if teacher is None:
+            teacher = IsTextFeaturesModel.build_teacher()
+            teacher.load_weights(teacher_checkpoint, strict=False)
+        
+        student = IsTextFeaturesModel.build_student()
+        
+        return KnowledgeTransferNetwork(student, teacher, epoch_batches=epoch_batches, name_suffix=IsTextFeaturesModel.name, **kwargs)
+    
+    
+    def __init__(self, name_suffix='',num_res_blocks = 4,
+        res_unit_mul = 8,
+        res_layers = 8,
+        units_div = 2,
+        dropout_div = 3,
+        start_dropout = 0.3, max_lr=2e-4, min_lr_divisor=20, epoch_batches=32000, step_size_up_epoch_mul=0.5, warmup_period_epoch_mul=2, gamma=0.75, last_epoch=-1, device=None):
+        super().__init__(IsTextFeaturesModel.name+name_suffix, device=device)
         # Input = (-1, 77, num_features)
         # Output = (-1, 77, vocab_size)
         # Loss = diffable encoding

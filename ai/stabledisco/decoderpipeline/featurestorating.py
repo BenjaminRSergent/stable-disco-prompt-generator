@@ -4,24 +4,49 @@ import ai.torchmodules.layers as torchlayers
 import ai.torchmodules.scheduler as torchscheduler
 import torch
 import torch.nn as nn
+from ai.stabledisco.decoderpipeline.knowledgetransfernetwork import \
+    KnowledgeTransferNetwork
 
 
 class FeaturesToRatingModel(torchmodules.BaseModel):
     name = "FeaturesToRatingV8"
+    
+    @staticmethod
+    def build_teacher(**kwargs):
+        return FeaturesToRatingModel(*kwargs)
+    
+    @staticmethod
+    def build_student(**kwargs):
+        return FeaturesToRatingModel(name_suffix='Student', init_mul=2, res_unit_mul=1.5, **kwargs)
+    
+    
+    @staticmethod
+    def build_knowledge_transfer_model(teacher=None,  teacher_checkpoint="best", **kwargs):
+        if teacher is None:
+            teacher = FeaturesToRatingModel.build_teacher()
+            teacher.load_weights(teacher_checkpoint, strict=False)
+        
+        student = FeaturesToRatingModel.build_student()
+        return KnowledgeTransferNetwork(student, teacher, name_suffix=FeaturesToRatingModel.name, **kwargs)
+        
+    
     # TODO: Decouple learning rate scheduler
-    def __init__(self, max_lr=2e-4, min_lr_divisor=20, epoch_batches=8214, step_size_up_epoch_mul=0.5, warmup_period_epoch_mul=2, gamma=0.75, last_epoch=-1, device=None):
-        super().__init__(FeaturesToRatingModel.name, device=device)
+    def __init__(self,
+                 name_suffix='',
+                 init_mul=4, res_unit_mul=2, res_layers=3, units_div=3, num_res_blocks=5,
+                 max_lr=2e-4, min_lr_divisor=20, epoch_batches=8214, step_size_up_epoch_mul=0.5, warmup_period_epoch_mul=2, gamma=0.75, last_epoch=-1, device=None):
+        super().__init__(FeaturesToRatingModel.name+ name_suffix, device=device)
         # Input = (-1, 77, num_features)
         # Output = (-1, 77, vocab_size)
         # Loss = diffable encoding
         
-        self._expander = torchlayers.LinearWithActivation(sdconsts.feature_width, sdconsts.feature_width*4,
+        self._expander = torchlayers.LinearWithActivation(sdconsts.feature_width, sdconsts.feature_width*init_mul,
                                                           dropout=0.2,
                                                           activation=torchlayers.QuickGELU)
         
-        self._resblocks = torchlayers.ReducingResDenseStack(sdconsts.feature_width*4,
-                                                            num_res_blocks=5, res_unit_mul=2,
-                                                            res_layers=3, units_div=3,
+        self._resblocks = torchlayers.ReducingResDenseStack(int(sdconsts.feature_width*init_mul),
+                                                            num_res_blocks=num_res_blocks, res_unit_mul=res_unit_mul,
+                                                            res_layers=res_layers, units_div=units_div,
                                                             dropout_div=1, start_dropout=0.1,
                                                             activation=nn.LeakyReLU)
         

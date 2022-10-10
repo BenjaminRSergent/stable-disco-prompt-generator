@@ -268,12 +268,21 @@ class PromptUpgrader:
 
 
     def _run_upgrade_cycle(self, target_features, tokens, curr_best_score, num_cands, memory, ascii_only,  decay_factor=1.0, print_freq=0, start_idx=1, end_idx=-1):
+        start_idx = max(1, start_idx)
+        # TODO: Wrap end idx
+        last_idx = tokens.size(0)-1
         if end_idx == -1:
-            end_idx = tokens.size(0)-1
+            end_idx = last_idx
+            
+        if end_idx > tokens.size(0)-1:
+            to_upgrade = list(range(start_idx, last_idx)) + list(range(1, max(start_idx - last_idx, 1)))
+        else:
+            to_upgrade = list(range(start_idx, end_idx))
+            
         end_idx = min(end_idx, tokens.size(0)-1)
 
         ends = []
-        for curr_end in range(start_idx, end_idx):
+        for curr_end in to_upgrade:
             if tokens[curr_end] == _eot_token: 
                 break
         

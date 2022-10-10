@@ -26,7 +26,7 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         return FeaturesToTokensAesModel(clip_model, name_suffix="Student", block_mul=3, layers=4, decoder_mul=2, heads=12, freeze_embedding=freeze_embedding)
     
     @staticmethod
-    def build_knowledge_transfer_model(clip_model: nn.Module, teacher=None, teacher_checkpoint="best"):
+    def build_knowledge_transfer_model(clip_model: nn.Module, teacher=None,  teacher_checkpoint="best"):
         if teacher is None:
             teacher = FeaturesToTokensAesModel.build_teacher(clip_model)
             teacher.load_weights(teacher_checkpoint, strict=False)
@@ -34,7 +34,7 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         student = FeaturesToTokensAesModel.build_student(clip_model)
         student.initialize_student(teacher)
         
-        return KnowledgeTransferNetwork(student, teacher, suffix=FeaturesToTokensAesModel.name)
+        return KnowledgeTransferNetwork(student, teacher, name_suffix=FeaturesToTokensAesModel.name)
         
     def __init__(self, clip_model: nn.Module, name_suffix="",
                  lower_dropout=0.1, upper_dropout=0.05,

@@ -66,7 +66,7 @@ class CombinedClipRatingCalculator(MetricsCalculator):
         rating_step_scale = self._rating_weight
         # Reward a 0.035 increase in similarity the same as a 1.0 increase in rating at baseline.
         # That scale roughly maps to typical values and changes during evolution
-        sim_step_scale = 0.035 * self._clip_weight
+        sim_step_scale = 0.04 * self._clip_weight
         
         # The typical starting point for a decent prompt is cosine sim 0.45
         sim_floor = 0.5

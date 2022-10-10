@@ -24,7 +24,7 @@ class ReducingResDenseStack(nn.Module):
         curr_dropout = start_dropout
         prev_width = curr_width
         for _ in range(num_res_blocks):
-            block = ResDenseStack(curr_width, curr_width*res_unit_mul, layers=res_layers, activation=activation, dropout=curr_dropout, batch_norm_type=batch_norm_type)
+            block = ResDenseStack(curr_width, int(curr_width*res_unit_mul), layers=res_layers, activation=activation, dropout=curr_dropout, batch_norm_type=batch_norm_type)
             self._resblocks.append(block)
             
             prev_width = curr_width

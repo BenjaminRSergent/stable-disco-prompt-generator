@@ -12,8 +12,8 @@ from ai.stabledisco.decoderpipeline.lowerfeaturelayers import \
 
 class KnowledgeTransferNetwork(torchmodules.BaseModel):
     name="KnowledgeTransferModel"
-    def __init__(self, student, teacher, teacher_percent=0.25, suffix="", max_lr=4e-4, min_lr_divisor=20, epoch_batches=150000, step_size_up_epoch_mul=1/20, warmup_period_epoch_mul=0.05, gamma=0.75, last_epoch=-1, device=None):
-        super().__init__(KnowledgeTransferNetwork.name+suffix, device=device)
+    def __init__(self, student, teacher, teacher_percent=0.25, name_suffix="", max_lr=4e-4, min_lr_divisor=20, epoch_batches=150000, step_size_up_epoch_mul=1, warmup_period_epoch_mul=1, gamma=0.75, last_epoch=-1, device=None):
+        super().__init__(KnowledgeTransferNetwork.name+name_suffix, device=device)
         self._student = student
         self._teacher = teacher
         self._teacher_percent = teacher_percent
@@ -38,8 +38,8 @@ class KnowledgeTransferNetwork(torchmodules.BaseModel):
 
     def _calc_batch_loss(self, x_inputs, y_targets):
         with torch.autocast(device_type="cuda"):
-            teacher_out = self._teacher((x_inputs, y_targets))
-            return self._student._calc_batch_loss(x_inputs, y_targets) * self._student_percent + self._student._calc_batch_loss(x_inputs, y_targets, teacher_out) * self._teacher_percent
+            teacher_out = self._teacher(x_inputs)
+            return self._student._calc_batch_loss(x_inputs, y_targets) * self._student_percent + self._student._calc_batch_loss(x_inputs, teacher_out) * self._teacher_percent
             
     def forward(self, x_inputs):
         return self._student(x_inputs)
