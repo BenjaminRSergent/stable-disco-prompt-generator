@@ -147,6 +147,7 @@ class BeamSearcher:
         self._tokens_model.train(False)
         self._ratings_model.train(False)
 
+        self._upgrader.set_verbose(False)
         if verbose:
             print(f"Starting beam search to find the top {topk} prompts of length {max_len}.")
 
@@ -231,11 +232,17 @@ class BeamSearcher:
         tokens_added = candidates[0].prev_tokens.size(0)+1
         tokens_since_start = tokens_added - upgrade_config.upgrade_iter_start
         num_passes = upgrade_config.num_passes
-        #upgrade_top = tokens_since_start > 0 and (tokens_since_start % upgrade_config.tokens_per_pass) == 0
-        upgrade_top = search_state.iter_without_improvement > 0
         
-        
-        start_idx = (upgrade_config.token_step_size * search_state.times_upgraded) % (tokens_added-1)
+        if tokens_added < 20 :
+            start_idx = 1
+            max_wraps = 10
+        elif search_state.times_upgraded % 5 == 0:
+            max_wraps = 12
+            start_idx = 1
+        else:
+            start_idx = 2*tokens_added//5
+            max_wraps = 4
+            
         start_idx = max(1, start_idx)
 
         if start_idx < upgrade_config.token_step_size:
@@ -260,48 +267,61 @@ class BeamSearcher:
         top_clip_beams = next_beam_tokens_full[top_clip_idxs]
             
         top_beam, cosine_sim = self._clip_model.rank_similarity(search_state.features, top_clip_beams, top_count=1)
+        
         top_beam = top_beam[0]
+        
         cosine_sim = torch.tensor(cosine_sim[0], device= top_beam.device)
-
         
-        upgrade_top = cosine_sim - search_state.best_match_cosine <= self._epsilon
-        cands_mul = 4
-        min_cands = num_candidates
-        max_cands = min_cands * cands_mul ** 2
-        first_pass = max_cands * 1.5
-        num_candidates = first_pass 
-        con_improve = 0
-        con_improve_to_div = 2
         
-        times_wrapped = 0
-        max_wraps = 4
-        if upgrade_top and search_state.config.enable_upgrades:
-            to_upgrade = [top_clip_idxs[0]]
-
-            if top_clip_idxs[0] != top_beam_idxs[0]:
-                to_upgrade.append(top_beam_idxs[0])
-
-            for idx in to_upgrade:#, top_beam_idxs[0]]:
+        min_improve = 0.005
+        
+        if cosine_sim - search_state.best_match_cosine < min_improve:
+            search_state.iter_without_improvement += 1
+        else:
+            search_state.iter_without_improvement = 0
             
-                orig_beam = top_beam
+        upgrade_top = search_state.iter_without_improvement > 1
+
+        cands_mul = 1
+        min_cands = num_candidates
+        max_cands = min_cands * cands_mul
+        first_pass = max_cands * 8
+        if upgrade_top and search_state.config.enable_upgrades:
+            search_state.iter_without_improvement = 0
+            stack = torch.stack(tuple(next_beam_tokens_full[top_clip_idxs]))
+            
+            # Upgrade the high clip score beam most different from the top. to increase the chance
+            # of finding improvements
+            to_upgrade = [top_beam]#self._clip_model.get_n_most_disim([search_state.final_beam_tokens[-1]], stack, n=1)[0]]
+            print(f"Will upgrade  {self._tokens_model.decode(to_upgrade)}")
+
+            for orig_beam in to_upgrade:#, top_beam_idxs[0]]:
+                con_improve = 0
+                con_improve_to_div = 2
+                
+                times_wrapped = 0
+                num_candidates = first_pass 
+                
                 beam_eot_idx = sdutils.find_end_idx(orig_beam)
                 new_beam = orig_beam.clone()
 
+
                 last_score = self._upgrader._calculator.score_tokens(search_state.features, new_beam)[0]
                 for pass_num in range(num_passes):
-                    print(f"Running up to {num_passes} upgrade passes on {tokens_added-2} tokens at {num_candidates} from {start_idx} to {end_idx} on beam with the highest similarity. div {con_improve}")
+                    if pass_num % 5 == 0:
+                        print(f"Running up to {num_passes} upgrade passes on {tokens_added-2} tokens at {num_candidates} from {start_idx} to {end_idx} on beam with the highest similarity. on beam \"{self._tokens_model.decode(new_beam)[0]}\"")
                     new_beam, new_score = self._upgrader.single_upgrade_pass(search_state.features, new_beam, start_idx=start_idx, end_idx=end_idx,
                                                                             num_candidates=int(num_candidates), ascii_only=search_state.config.ascii_only,
                                                                             decay_factor=0.85)
-                    if (new_score - last_score) < self._epsilon:
+                    if (new_score - last_score) < min_improve:
                         con_improve = 0
                         if num_candidates < max_cands:
                             num_candidates *= cands_mul
                         else:
-                            times_wrapped += 1
                             if times_wrapped >= max_wraps:
                                 break
                             else:
+                                times_wrapped += 1
                                 num_candidates = first_pass 
                                 start_idx += upgrade_config.token_step_size
                                 end_idx += upgrade_config.token_step_size
@@ -339,11 +359,10 @@ class BeamSearcher:
                 top_beam = new_beam
                 new_beam = new_beam[:beam_eot_idx]
                 
-                search_state.curr_beams.append((candidates[idx].prob, new_beam.clone()))
+                search_state.curr_beams.append((candidates[top_beam_idxs[0]].prob, new_beam.clone()))
 
             search_state.times_upgraded += 1
-            
-            search_state.iter_without_improvement = -1
+            print()
             
         if cosine_sim > search_state.best_match_cosine:
             search_state.best_match_cosine = cosine_sim

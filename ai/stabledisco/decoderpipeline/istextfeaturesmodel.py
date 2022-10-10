@@ -20,7 +20,7 @@ class IsTextFeaturesModel(torchmodules.BaseModel):
     
     @staticmethod
     def build_student(**kwargs):
-        return IsTextFeaturesModel(name_suffix='Student', res_unit_mul=2, res_layers=2, start_dropout=0.2, *kwargs)
+        return IsTextFeaturesModel(name_suffix='Student', res_unit_mul=4, res_layers=4, num_res_blocks=5, *kwargs)
     
     
     @staticmethod
@@ -34,7 +34,8 @@ class IsTextFeaturesModel(torchmodules.BaseModel):
         return KnowledgeTransferNetwork(student, teacher, epoch_batches=epoch_batches, name_suffix=IsTextFeaturesModel.name, **kwargs)
     
     
-    def __init__(self, name_suffix='',num_res_blocks = 4,
+    def __init__(self, name_suffix='',
+        num_res_blocks = 4,
         res_unit_mul = 8,
         res_layers = 8,
         units_div = 2,

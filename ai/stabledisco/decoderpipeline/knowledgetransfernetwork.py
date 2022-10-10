@@ -38,8 +38,12 @@ class KnowledgeTransferNetwork(torchmodules.BaseModel):
 
     def _calc_batch_loss(self, x_inputs, y_targets):
         with torch.autocast(device_type="cuda"):
+            student_loss = self._student._calc_batch_loss(x_inputs, y_targets)
+            if not self.training:
+                return student_loss
+            
             teacher_out = self._teacher(x_inputs)
-            return self._student._calc_batch_loss(x_inputs, y_targets) * self._student_percent + self._student._calc_batch_loss(x_inputs, teacher_out) * self._teacher_percent
+            return student_loss * self._student_percent + self._student._calc_batch_loss(x_inputs, teacher_out) * self._teacher_percent
             
     def forward(self, x_inputs):
         return self._student(x_inputs)

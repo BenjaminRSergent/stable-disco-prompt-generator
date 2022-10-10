@@ -323,7 +323,7 @@ class PromptUpgrader:
                     break
 
                 num_cands = int(max(128, int(num_cands*decay_factor)))
-        print(f"Replacements at {ends}")
+        #print(f"Replacements at {ends}")
         return tokens, curr_best_score
 
     def set_verbose(self, verbose):

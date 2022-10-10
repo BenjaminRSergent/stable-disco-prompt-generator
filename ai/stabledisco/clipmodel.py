@@ -30,9 +30,10 @@ class ClipModel(torch.nn.Module):
         if type(encoded_baseline) is not list:
             encoded_baseline = [encoded_baseline]
         most_disim = encoded_baseline
+        
         text_features = self.get_features(encoded_test_array, verbosity=verbosity)
         with torch.no_grad():
-            for _ in range(min(n - 1, len(encoded_test_array))):
+            for _ in range(min(n, len(encoded_test_array))):
                 most_disim_features = self.get_features(most_disim, verbosity=0)
                 similarity = torch.zeros(
                     (1, len(encoded_test_array)), device=text_features.device
@@ -44,15 +45,12 @@ class ClipModel(torch.nn.Module):
                 _, top_labels = similarity.float().cpu().topk(1, dim=-1, largest=False)
                 encoded_pos = top_labels[0][0]
                 most_disim.append(encoded_test_array[encoded_pos])
-                encoded_test_array = (
-                    encoded_test_array[:encoded_pos]
-                    + encoded_test_array[encoded_pos + 1 :]
-                )
+                encoded_test_array = torch.cat(tuple((encoded_test_array[:encoded_pos],encoded_test_array[encoded_pos + 1 :])), axis=0)
                 text_features = torch.cat(
                     (text_features[:encoded_pos], text_features[encoded_pos + 1 :])
                 )
 
-            return most_disim
+            return most_disim[1:]
 
     def cosine_similarity(
         self, baseline_features, encoded_test_array, end_idx=-1, verbosity=1
@@ -163,7 +161,7 @@ class ClipModel(torch.nn.Module):
         )
 
     def get_features(self, encoded, verbosity=1):
-        if type(encoded) is not list:
+        if type(encoded) is not list and type(encoded) is not torch.Tensor:
             encoded = [encoded]
         if type(encoded[0]) == torch.Tensor:
             return self.features_from_tokens(encoded, verbosity=verbosity)
@@ -182,11 +180,17 @@ class ClipModel(torch.nn.Module):
     def features_from_tokens(
         self, tokens, step_size=10000, verbosity=1, cuda=True, end_idx=-1
     ):
+        
+        if type(tokens) is list:
+            tokens = torch.stack(tuple(tokens))
         def local_encode_func(tokens):
             if len(tokens.shape) == 1:
                 tokens = tokens.unsqueeze(0)
+            elif len(tokens.shape) == 3 and tokens.size(0) == 1:
+                tokens = tokens.squeeze(0)
             if end_idx == -1:
-                return self._model.encode_text(torch.stack(tuple(tokens)))
+                return self._model.encode_text(tokens)
+
             return self._features_from_uniform_end_tokens(tokens, end_idx)
 
         with torch.no_grad():
