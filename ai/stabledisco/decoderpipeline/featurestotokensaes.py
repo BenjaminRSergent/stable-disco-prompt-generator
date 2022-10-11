@@ -324,14 +324,14 @@ def add_token_and_end(curr_tokens, new_token, max_size=77):
     device = curr_tokens.get_device()
 
     possible_token = torch.tensor([new_token], device=device, dtype=torch.long)
-    if new_token == _eot_token:
+    if new_token == sdconsts._eot_token:
         ret = torch.cat((curr_tokens, possible_token))
     else:
         ret = torch.cat(
             (
                 curr_tokens,
                 possible_token,
-                torch.tensor([_eot_token], device=device, dtype=torch.long),
+                torch.tensor([sdconsts._eot_token], device=device, dtype=torch.long),
             )
         )
 
