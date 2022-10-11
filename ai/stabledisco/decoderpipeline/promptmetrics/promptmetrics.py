@@ -1,6 +1,7 @@
 import abc
 
 import torch
+from ai.stabledisco.clipmodel import ClipModel
 
 
 class MetricsCalculator(abc.ABC):
@@ -30,7 +31,7 @@ class MetricsCalculator(abc.ABC):
 
 
 class ClipCalculator(MetricsCalculator):
-    def __init__(self, clip_model) -> None:
+    def __init__(self, clip_model: ClipModel) -> None:
         super().__init__()
         self._clip_model = clip_model
 
@@ -40,9 +41,8 @@ class ClipCalculator(MetricsCalculator):
 
 
 class RatingCalculator(MetricsCalculator):
-    def __init__(self, clip_model, to_rating_model) -> None:
+    def __init__(self, to_rating_model: torch.nn.Module,) -> None:
         super().__init__()
-        self._clip_model = clip_model
         self._to_rating_model = to_rating_model
 
     def score_tokens(self, _, tokens):
@@ -51,22 +51,20 @@ class RatingCalculator(MetricsCalculator):
 
 
 class CombinedClipRatingCalculator(MetricsCalculator):
-    def __init__(self, clip_model, to_rating_model, rating_weight=1.0, clip_weight=1.0) -> None:
+    def __init__(self, clip_model: ClipModel, to_rating_model: torch.nn.Module, rating_weight=1.0, clip_weight=1.0) -> None:
         super().__init__()
         self._clip_model = clip_model
         self._to_rating_model = to_rating_model
         self._rating_weight = rating_weight
-
-        
         self._clip_weight = clip_weight
 
     def score_tokens(self, target_features, tokens):
         token_features = self._clip_model.features_from_tokens(tokens, verbosity=0)
     
         rating_step_scale = self._rating_weight
-        # Reward a 0.035 increase in similarity the same as a 1.0 increase in rating at baseline.
+        # Reward a 0.055 increase in similarity the same as a 1.0 increase in rating at baseline.
         # That scale roughly maps to typical values and changes during evolution
-        sim_step_scale = 0.04 * self._clip_weight
+        sim_step_scale = 0.045 * self._clip_weight
         
         # The typical starting point for a decent prompt is cosine sim 0.45
         sim_floor = 0.5

@@ -1,9 +1,10 @@
 import random
 import re
 
+import ai.stabledisco.constants as sdconsts
 import ai.stabledisco.utils as sdutils
-import clip
 import torch
+from ai.stabledisco.clipmodel import ClipModel
 from ai.stabledisco.decoderpipeline.promptmetrics import \
     CombinedClipRatingCalculator
 from clip.clip import _tokenizer as clip_tokenizer
@@ -56,7 +57,7 @@ class PromptUpgrader:
 
             return is_improved
 
-    def __init__(self, tokens_model, clip_model, rating_model, calculator=None, placeholder_lst=None, improve_eps=1e-7, ascii_only=True, no_banned=True, verbose=True):
+    def __init__(self, tokens_model: torch.nn.Module, clip_model: ClipModel, rating_model: torch.nn.Module, rating_weight=1.0, calculator=None, placeholder_lst=None, improve_eps=1e-7, ascii_only=True, no_banned=True, verbose=True):
         self._tokens_model = tokens_model
         self._clip_model = clip_model
         self._rating_model = rating_model
@@ -70,7 +71,7 @@ class PromptUpgrader:
         self._placeholder_lst = placeholder_lst
 
         if calculator is None:
-            calculator = CombinedClipRatingCalculator(self._clip_model, self._rating_model)
+            calculator = CombinedClipRatingCalculator(self._clip_model, self._rating_model, rating_weight=rating_weight)
         self._calculator = calculator
 
     def _create_state(self, target_features, tokens):
@@ -82,8 +83,7 @@ class PromptUpgrader:
         curr_best_score = self._calculator.score_tokens(target_features, tokens)[0].item()
         return PromptUpgrader.PromptState(self, target_features, memory, tokens, curr_best_score)
 
-    def upgrade(self, target_features, tokens, candidate_cnt=1024, large_pass_factor=4, max_init_iter=6, add_stride=5, max_tokens=77, start_idx=1, state=None):
-        large_candidate_cnt = candidate_cnt*large_pass_factor
+    def upgrade(self, target_features, tokens, candidate_cnt=4096, first_pass_mul=1.5, max_init_iter=6, add_stride=3, max_tokens=sdconsts.prompt_token_len, orig_start_idx=1, orig_end_idx=sdconsts.prompt_token_len, state=None):
 
         # TODO: Mask place holders when ranking tokens
         with torch.no_grad():
@@ -93,83 +93,86 @@ class PromptUpgrader:
             if self._verbose:
                 print("Running initial refinement")
 
-            step_size = 10
-            refine_cnt = candidate_cnt
+            step_size = 5
+            cand_mul = 4
+            max_muls = 2
+            min_cands = int(candidate_cnt / (cand_mul ** max_muls))
+            max_cands = candidate_cnt
+            first_pass = int(candidate_cnt * first_pass_mul)
+            
+            prompt_end = state.get_end_idx()
+            max_tokens = min(sdconsts.prompt_token_len, max_tokens)
+            add_tokens = prompt_end < max_tokens
+            
+            self.remove_tokens(state.target_features, state.best_tokens, state=state, start_idx=orig_start_idx)
+            
+            
             for _ in range(3):
-                for curr_start in range(start_idx, state.get_end_idx() - step_size, step_size):
+                while add_tokens:
+                    old_best = state.curr_best_score
+                    self.add_tokens(state.target_features, state.best_tokens, add_stride, state=state)
+                    state.remove_tmp_state()
+                    if not _is_improvement_eps(state.curr_best_score, old_best) or prompt_end >= max_tokens:
+                        add_tokens = False
+                    
+                for curr_start in range(orig_start_idx, min(state.get_end_idx() - step_size, orig_end_idx), step_size):
                     got_improvement = False
+                    curr_cands = first_pass
                     for _ in range(max_init_iter//2):
                         old_best = state.curr_best_score
-                        self.single_upgrade_pass(state.target_features, state.best_tokens, refine_cnt, state=state, start_idx=curr_start, end_idx=curr_start+step_size)
-                        if _is_improvement_eps(state.curr_best_score, old_best):
-                            got_improvement = True
+                        curr_end_idx=curr_start+step_size
+                        if self._verbose:
+                            print(f"Upgrade pass at {curr_cands} from {curr_start} to {curr_end_idx}")
+                        self.single_upgrade_pass(state.target_features, state.best_tokens, curr_cands, state=state, start_idx=curr_start, end_idx=curr_end_idx)
+                        got_improvement = _is_improvement_eps(state.curr_best_score, old_best)
                             
                     if not got_improvement:
-                        if refine_cnt == large_candidate_cnt:
-                            break
+                        if curr_cands >= max_cands:
+                            continue
                         else:
-                            refine_cnt = large_candidate_cnt
-                    elif refine_cnt == large_candidate_cnt:
-                        refine_cnt = candidate_cnt
+                            curr_cands *= cand_mul
+                    elif curr_cands > max_cands:
+                        curr_cands = min_cands
+                    elif curr_cands > min_cands:
+                        curr_cands = max(min_cands, int(curr_cands / cand_mul))
 
             prompt_end = state.get_end_idx()
-            num_cycles = 0
-            
-            while prompt_end < max_tokens-1:
-                # There are often improvements smaller passes catch after large passes. Alternating medium and large passes has similar
-                # quality results and saves time.
-                if (num_cycles) % 2 == 0:
-                    pass_cnt = candidate_cnt 
-                else:
-                    pass_cnt = large_candidate_cnt
-
-                num_cycles += 1
-                old_score = state.curr_best_score
-                self.add_tokens(state.target_features, state.best_tokens, add_stride, state=state)
-                if self._verbose:
-                    print(f"Upgrade cycle at {pass_cnt}")
-                self.single_upgrade_pass(state.target_features, state.best_tokens, pass_cnt, state=state, start_idx=start_idx)
-
-                if not _is_improvement_eps(state.curr_best_score, old_score):
-                    if self._verbose:
-                        print("Failed to improve adding tokens, exiting add-token loop")
-                        break
-                
-                prompt_end = state.get_end_idx()
 
             state.remove_tmp_state()
-            self.remove_tokens(state.target_features, state.best_tokens, state=state, start_idx=start_idx)
+            self.remove_tokens(state.target_features, state.best_tokens, state=state, start_idx=orig_start_idx)
             if self._verbose:
                 print(f"Finishing upgrade with a single large pass")
-            self.single_upgrade_pass(state.target_features, state.best_tokens, large_candidate_cnt, state=state, start_idx=start_idx)
+            self.single_upgrade_pass(state.target_features, state.best_tokens, first_pass, state=state, start_idx=orig_start_idx)
 
             return state.get_best()
 
     def single_upgrade_pass(self, target_features, tokens, num_candidates, decay_factor=0.9, state=None, start_idx=1, end_idx=-1):
         with torch.no_grad():
-            if not state:
-                state = self._create_state(target_features, tokens)
+            with torch.autocast(device_type="cuda"):
+                if not state:
+                    state = self._create_state(target_features, tokens)
 
-            new_tokens, new_best = self._swap(target_features, tokens, state.tmp_best_score, start_idx=start_idx, end_idx=end_idx)
-            state.update_tokens_if_better(new_tokens, new_best)
+                new_tokens, new_best = self._swap(target_features, tokens, state.tmp_best_score, start_idx=start_idx, end_idx=end_idx)
+                state.update_tokens_if_better(new_tokens, new_best)
 
-            new_tokens, new_best = self._run_upgrade_cycle(target_features, tokens, state.tmp_best_score, num_candidates, state.memory,
-                                                           decay_factor=decay_factor, start_idx=start_idx, end_idx=end_idx)
+                new_tokens, new_best = self._run_upgrade_cycle(target_features, tokens, state.tmp_best_score, num_candidates, state.memory,
+                                                            decay_factor=decay_factor, start_idx=start_idx, end_idx=end_idx)
 
-            state.update_tokens_if_better(new_tokens, new_best)
-            
-            new_tokens, new_best = self._swap(target_features, tokens, state.tmp_best_score, start_idx=start_idx, end_idx=end_idx)
-            state.update_tokens_if_better(new_tokens, new_best)
+                state.update_tokens_if_better(new_tokens, new_best)
+                
+                new_tokens, new_best = self._swap(target_features, tokens, state.tmp_best_score, start_idx=start_idx, end_idx=end_idx)
+                state.update_tokens_if_better(new_tokens, new_best)
 
-        return state.get_best()
+                return state.get_best()
 
-    def remove_tokens(self, target_features, tokens, state=None, start_idx=1):
+    def remove_tokens(self, target_features, tokens, state=None, max_remove = 5, start_idx=1):
         with torch.no_grad():
             if not state:
                 state = self._create_state(target_features, tokens)
             if self._verbose:
                 print("Testing token removal")
-            while True:
+                
+            for num_removed in range(max_remove):
                 to_test = [tokens.clone()]
                 for curr_end in range(start_idx, tokens.size(0)-1):
                     if tokens[curr_end] == _eot_token: 
@@ -192,12 +195,12 @@ class PromptUpgrader:
                 if not state.update_tokens_if_better(top_tokens[0][0], top_sim[0].item()):
                     break
                 if self._verbose:
-                    print(f"Removed token {self._tokens_model.decode(top_tokens[0][0])}")
+                    print(f"Removed {num_removed+1} tokens {self._tokens_model.decode(top_tokens[0][0])}")
 
             return state.get_best()
 
     def add_tokens(self, target_features, init_tokens, num_to_add, second_pass_freq=2, second_pass_cnt=2, state=None,
-                  new_token_candidates=(2*all_tokens_cnt)//3, refine_pass=quarter_tokens_cnt, final_pass=quarter_tokens_cnt//2):
+                  new_token_candidates=all_tokens_cnt, refine_pass=half_tokens_cnt, final_pass=quarter_tokens_cnt//2):
         if not state:
             state = self._create_state(target_features, init_tokens)
         prompt_end = state.get_end_idx()
@@ -208,6 +211,7 @@ class PromptUpgrader:
         num_without_improve = 0
         max_without_improve = 2
         fill_token = 0
+        
         while num_added < num_to_add and prompt_end < 76:
             tokens = state.tmp_best_tokens.clone()
             tokens[prompt_end] = fill_token

@@ -1,9 +1,12 @@
 import typing
 
+import ai.stabledisco.constants as sdconsts
 import clip
 import PIL
 import torch
 from ai.stabledisco.encodedtext import EncodedText
+from regex import X
+from sympy import nonlinsolve
 
 
 class ClipModel(torch.nn.Module):
@@ -16,6 +19,7 @@ class ClipModel(torch.nn.Module):
         self._name = name
         self._model = clip_model
         self._preprocess = preprocess
+        self._embedded_end = None
 
     def forward(self, x_input):
         return self._model(x_input)
@@ -178,7 +182,7 @@ class ClipModel(torch.nn.Module):
         )
 
     def features_from_tokens(
-        self, tokens, step_size=10000, verbosity=1, cuda=True, end_idx=-1
+        self, tokens, step_size=5000, verbosity=1, cuda=True, end_idx=-1
     ):
         
         if type(tokens) is list:
@@ -289,6 +293,62 @@ class ClipModel(torch.nn.Module):
         x = x.permute(1, 0, 2)  # LND -> NLD
 
         return x
+    
+    def embed_partial_tokens(self, tokens):
+        if len(tokens.shape) == 1:
+            tokens = tokens.unsqueeze(0)
+        return self._model.token_embedding(tokens).type(self._model.dtype)  # [batch_size, n_ctx, d_model]
+        
+    def add_to_embedded(self, embeded_tokens, new_tokens):
+        if len(embeded_tokens.shape) == 1:
+            embeded_tokens = embeded_tokens.unsqueeze(0)
+            
+        if len(new_tokens.shape) == 1:
+            new_tokens = new_tokens.unsqueeze(0)
+        x = self._model.token_embedding(new_tokens).type(self._model.dtype)  # [batch_size, n_ctx, d_model]
+        return torch.cat(embeded_tokens, x, axis=1)
+    
+    def encode_embeded(self, tokens, embeded_tokens):
+        while len(tokens.shape) < 2:
+            tokens = tokens.unsqueeze(0)
+
+        while len(embeded_tokens.shape) < 3:
+            embeded_tokens = embeded_tokens.unsqueeze(0)
+            
+        rem_len = sdconsts.prompt_token_len - embeded_tokens.size(1)
+        ends = self._get_embedded_end(rem_len)
+        
+        x = torch.cat((embeded_tokens, ends), axis=1)
+
+        x = x + self._model.positional_embedding.type(self._model.dtype)
+        x = x.permute(1, 0, 2)  # NLD -> LND
+        x = self._model.transformer(x)
+        x = x.permute(1, 0, 2)  # LND -> NLD
+        x = self._model.ln_final(x).type(self._model.dtype)
+
+        # x.shape = [batch_size, n_ctx, transformer.width]
+        # take features from the eot embedding (eot_token is the highest number in each sequence)
+        
+        if tokens.size() != sdconsts.prompt_token_len:
+            end_idxs = tokens.size(1)
+        else:
+            end_idxs = tokens.argmax(dim=-1)
+            
+        x = x[torch.arange(x.shape[0]), end_idxs] @ self._model.text_projection
+
+        return x
+    
+    def _get_embedded_end(self, suffix_len):
+        # TODO: remove after testing
+        self._embedded_end = None
+        if self._embedded_end is None:
+            # Put the end token embedding in front, remove the start
+            empty_tokens = clip.tokenize("").cuda()[0]
+            self._embedded_end = self.embed_partial_tokens(empty_tokens)
+            self._embedded_end[0,0] = self._embedded_end[0,1]
+            self._embedded_end[0,1] = self._embedded_end[0,-1]
+            
+        return self._embedded_end[:, :suffix_len, :]
 
     def encode_text(self, text, truncate=False):
         max_len = 77

@@ -265,7 +265,7 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         vocab_out = self._vocab_out(decoder_out[:, -1])
 
         probs = torch.softmax(vocab_out, dim=-1)
-        if custom_mask:
+        if custom_mask is not None:
             probs *= custom_mask
         elif ascii_only or no_banned:
             probs *= self.get_mask(ascii_only, no_banned)
@@ -277,6 +277,7 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
 
     def get_mask(self, ascii_only, no_banned):
         mask_key = self.get_mask_key(ascii_only, no_banned)
+        
         if mask_key in self._mask_dict:
             return self._mask_dict[mask_key]
         

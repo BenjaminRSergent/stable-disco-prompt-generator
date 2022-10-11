@@ -53,8 +53,6 @@ class BeamSearchConfig:
         self.ascii_only = ascii_only
         self.add_evolution_beams = add_evolution_beams
         self.verbose = verbose
-
-        
         
         if device is None:
             device = torchutils.get_default_device()
@@ -64,30 +62,30 @@ class BeamSearcher:
     _epsilon = 1e-6
     class BeamSearchState:
         # Variables related to a given beam search to reduce excessive method parameters
-        def __init__(self, features: torch.tensor, memory: torch.tensor, config: BeamSearchConfig, upgrade_config: UpgradeConfig, start_tokens: torch.Tensor = None):
+        def __init__(self, features: torch.tensor, memory: torch.tensor, search_config: BeamSearchConfig, upgrade_config: UpgradeConfig, start_tokens: torch.Tensor = None):
             self.features = features
             self.memory = memory
-            
-            if not start_tokens:
-                torch_zero = torch.tensor([0.0], device=config.device)
-                torch_start = torch.tensor([sdconsts.sot_token], device=config.device, dtype=torch.long)
-                
-                start_beams = [(torch_zero, torch_start)]
+            torch_zero = torch.tensor([0.0], device=search_config.device)
+            if start_tokens is None:
+                torch_start = torch.tensor([sdconsts.sot_token], device=search_config.device, dtype=torch.long)
+                self.curr_beams = [(torch_zero, torch_start)]
             else:
+                if start_tokens is str:
+                    start_tokens = clip.tokenize(start_tokens).cuda()
+                print(start_tokens)
                 start_tokens = start_tokens.clone()
                 end_idx = sdutils.find_end_idx(start_tokens)
                 if end_idx != -1:
-                    start_beams = start_tokens[:end_idx]
+                    start_tokens = start_tokens[:end_idx]
                     
-                start_beams = [start_tokens]
+                self.curr_beams = [(torch_zero, start_tokens)]
                 
-            self.curr_beams = start_beams
             self.final_beam_tokens = []
 
-            self.total_beams = config.model_beams + config.clip_beams
-            self.best_match_cosine = torch.tensor(0, device=config.device)
+            self.total_beams = search_config.model_beams + search_config.clip_beams
+            self.best_match_cosine = torch.tensor(0, device=search_config.device)
             self.iter_without_improvement = 0
-            self.config = config
+            self.config = search_config
             self.upgrade_config = upgrade_config
             self.iter_num = 0
             self.times_upgraded = 0
@@ -166,28 +164,29 @@ class BeamSearcher:
             print(f"Starting beam search to find the top {topk} prompts of length {max_len}.")
 
         with torch.no_grad():
-            # Setup the Inital search state
-            features = self._process_orig_features(features)
-            memory = self._tokens_model.features_to_memory(features).squeeze(0)
-            search_state = BeamSearcher.BeamSearchState(features, memory, start_tokens=start_tokens, search_config=search_config, upgrade_config=upgrade_config, )
+            with torch.autocast(device_type="cuda"):
+                # Setup the Inital search state
+                features = self._process_orig_features(features)
+                memory = self._tokens_model.features_to_memory(features).squeeze(0)
+                search_state = BeamSearcher.BeamSearchState(features, memory, start_tokens=start_tokens, search_config=search_config, upgrade_config=upgrade_config )
 
-            tokens_to_find = min(max_len, self._tokens_model._seq_len - 2)
-            for _ in range(tokens_to_find):
-                    
-                self._do_beam_search_step(search_state)
+                tokens_to_find = min(max_len, self._tokens_model._seq_len - 2)
+                for _ in range(tokens_to_find):
+                        
+                    self._do_beam_search_step(search_state)
 
-                if verbose and search_state.iter_num % 1 == 0:
+                    if verbose and search_state.iter_num % 1 == 0:
+                        self._print_search_state(search_state)
+                        
+                    search_state.iter_num += 1
+                
+                if verbose:
                     self._print_search_state(search_state)
-                    
-                search_state.iter_num += 1
-            
-            if verbose:
-                self._print_search_state(search_state)
-            
-            # Choose k tokens with the highest estimated score
-            best_tokens, final_cosine_sim = self._get_final_tokens(search_state, topk)
+                
+                # Choose k tokens with the highest estimated score
+                best_tokens, final_cosine_sim = self._get_final_tokens(search_state, topk)
 
-            return self._tokens_model.decode(best_tokens), final_cosine_sim, search_state.features
+                return self._tokens_model.decode(best_tokens), final_cosine_sim, search_state.features
     
     def _process_orig_features(self, features):
         # Take a weighted sum of the features and normalize
