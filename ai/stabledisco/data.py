@@ -291,7 +291,7 @@ class TextFeaturesToRatingSet(Dataset):
 
 class AlteredFeaturesSet(Dataset):
     def __init__(
-        self, features, start_idx, end_idx, feature_width=768, shuffle=True, device=None
+        self, features, start_idx, end_idx, feature_width=768, num_steps=5, shuffle=True, device=None
     ):
         self.all_features = features
 
@@ -300,12 +300,12 @@ class AlteredFeaturesSet(Dataset):
         self._shuffle = shuffle
         self._feature_width = feature_width
         self._data_idxs = None
+        self._num_steps = num_steps
 
         if device is None:
             device = torchutils.get_default_device()
         self._device = device
         
-        self._is_text = torch.tensor([1.0, 0.0])
         self._last_features=None
         self._prepare_data
 
@@ -322,44 +322,47 @@ class AlteredFeaturesSet(Dataset):
     def clear(self):
         self._data_idxs = None
 
-
-    def _make_rand_shift(self, cnt=1):
-        shift = torch.randn((cnt, 768))
+    def _make_rand_shift(self, scale_div):
+        shift = torch.randn((768,))
         shift /= shift.norm(dim=-1, keepdim=True)
-        scale = self._random_scale(cnt).float()
-        return scale, (scale * shift).view(-1)
-
-    def _random_scale(self, cnt=1, mean=0.025, std=0.25, min_scale=0.05):
-        return torch.abs(torch.randn((cnt, 1), dtype=torch.float) * std + mean) + min_scale
-
+        min_scale = 0.6
+    
+        scale = (torch.rand((1,))+min_scale) / scale_div 
+        return (scale * shift).view(1, 768) 
+    
     def __len__(self):
-        return (self._end_idx - self._start_idx)*2
+        return self._num_steps*(self._end_idx - self._start_idx)
 
     def __getitem__(self, idx):
         if self._data_idxs is None:
             self._prepare_data()
         
         with torch.no_grad():
+            #todo cross product
             features = self._get_features_for_idx(idx)
-            scale = 0.0
-            if idx % 2 == 1:
-                features = self._last_features
-                if features == None:
-                    features = self._get_features_for_idx(idx)
-                scale, shift = sdutils.make_random_feature_shifts()
-                features = features + shift
-                features /= features.norm(dim=-1, keepdim=True)
+
+            
+            if idx % 50 == 0:
+                scaled_features = features
+                sim = torch.ones(1)
+            else:
+                cycle_idx = idx % self._num_steps
+                scale_div = 1.5+2*(cycle_idx+1)/self._num_steps
+                scaled_features = features + self._make_rand_shift(scale_div)
+                scaled_features = scaled_features / scaled_features.norm(dim=-1, keepdim=True)
+                sim = sdutils.cosine_sim(features, scaled_features)
+            
         
-        ret = (features.float(), scale)
-        if idx//2 == self._end_idx - 1:
+        ret = (scaled_features.view(-1), sim)
+        if idx//self._num_steps == self._end_idx - 1:
             self.clear()
 
         return ret
 
     def _get_features_for_idx(self, idx):
-        actual_idx = self._data_idxs[idx // 2]
+        actual_idx = self._data_idxs[idx // self._num_steps]
         features = self.all_features[actual_idx].float()
-        return features / features.norm(dim=-1, keepdim=True)
+        return (features / features.norm(dim=-1, keepdim=True)).view(-1)
         
 def get_pipeline_data_loader(
     text_tokens,
@@ -471,7 +474,8 @@ def get_altered_feature_data_loader(
     features,
     batch_size=500,
     val_split=0.05,
-    num_workers=8,
+    num_workers=12,
+    val_workers=4,
     pin_memory=True,
 ):
     if not isinstance(features, torch.Tensor):
@@ -486,5 +490,5 @@ def get_altered_feature_data_loader(
     )
 
     train_data_loader = DataLoader(train_data_set, batch_size=batch_size, shuffle=False, pin_memory=pin_memory, num_workers=num_workers)
-    test_data_loader = DataLoader(val_data_set, batch_size=batch_size, shuffle=False, pin_memory=pin_memory, num_workers=num_workers)
+    test_data_loader = DataLoader(val_data_set, batch_size=batch_size, shuffle=False, pin_memory=pin_memory, num_workers=val_workers)
     return train_data_loader, test_data_loader

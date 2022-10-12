@@ -5,6 +5,7 @@ import ai.torchmodules.scheduler as torchscheduler
 import ai.torchmodules.utils as torchutils
 import torch
 import torch.nn as nn
+import ai.stabledisco.constants as sdconsts
 from ai.stabledisco.decoderpipeline.knowledgetransfernetwork import \
     KnowledgeTransferNetwork
 from ai.stabledisco.decoderpipeline.lowerfeaturelayers import \
@@ -12,7 +13,7 @@ from ai.stabledisco.decoderpipeline.lowerfeaturelayers import \
 
 
 class IsTextFeaturesModel(torchmodules.BaseModel):
-    name = "IsTextFeatureV3"
+    name = "IsTextFeatureV4"
     
     @staticmethod
     def build_teacher(**kwargs):
@@ -20,8 +21,13 @@ class IsTextFeaturesModel(torchmodules.BaseModel):
     
     @staticmethod
     def build_student(**kwargs):
-        return IsTextFeaturesModel(name_suffix='Student', res_unit_mul=4, res_layers=4, num_res_blocks=5, *kwargs)
-    
+        return IsTextFeaturesModel(name_suffix='Student', 
+                res_unit_mul = 2,
+                res_layers = 2,
+                dense_unit_div = 1.5,
+                dense_layer_base = 1.5,
+                dropout = 0.15,
+                **kwargs)
     
     @staticmethod
     def build_knowledge_transfer_model(teacher=None, epoch_batches=34200, teacher_checkpoint="best", **kwargs):
@@ -35,56 +41,42 @@ class IsTextFeaturesModel(torchmodules.BaseModel):
     
     
     def __init__(self, name_suffix='',
-        num_res_blocks = 4,
-        res_unit_mul = 8,
-        res_layers = 8,
-        units_div = 2,
-        dropout_div = 3,
-        start_dropout = 0.3, max_lr=2e-4, min_lr_divisor=20, epoch_batches=32000, step_size_up_epoch_mul=0.5, warmup_period_epoch_mul=2, gamma=0.75, last_epoch=-1, device=None):
+                 res_unit_mul = 6,
+                 res_layers = 4,
+                 dense_unit_div = 0.5,
+                 dense_layer_base = 1.5,
+                 dropout = 0.0,
+                 max_lr=2e-4, min_lr_divisor=20, epoch_batches=32000, step_size_up_epoch_mul=0.5, warmup_period_epoch_mul=2, gamma=0.75, last_epoch=-1, device=None):
+       
         super().__init__(IsTextFeaturesModel.name+name_suffix, device=device)
         # Input = (-1, 77, num_features)
         # Output = (-1, 77, vocab_size)
         # Loss = diffable encoding
 
-        # TODO: Extract to class
-        num_res_blocks = 4
-        res_unit_mul = 8
-        res_layers = 8
-        units_div = 2
-        dropout_div = 3
-        start_dropout = 0.3
+        self._res_stack = torchlayers.ResDenseStack(input_size=sdconsts.feature_width,
+                                                    block_width=sdconsts.feature_width*res_unit_mul,
+                                                    layers=res_layers,
+                                                    dropout=dropout,
+                                                    activation=nn.LeakyReLU)
         
-        self._resblocks = nn.ModuleList()
-        curr_width = sdconsts.feature_width
-        curr_dropout = start_dropout
-        prev_width = curr_width
-        for _ in range(num_res_blocks):
-            block = torchlayers.ResDenseStack(curr_width, curr_width*res_unit_mul, layers=res_layers, activation=nn.LeakyReLU, dropout=curr_dropout)
-            self._resblocks.append(block)
-            
-            prev_width = curr_width
-            curr_width //= units_div
-            
-            reducer = torchlayers.LinearWithActivation(
-                prev_width,
-                curr_width,
-                dropout=curr_dropout,
-                batch_norm_type=None,
-            )
-            
-            self._resblocks.append(reducer)
-            
-            curr_dropout /= dropout_div
+        dense_stack_units = [(int(dense_layer_base), int(self._res_stack.out_features/dense_unit_div)),
+                             (int(dense_layer_base*2), int(self._res_stack.out_features/(2*dense_unit_div))),
+                             (int(dense_layer_base*4), int(self._res_stack.out_features/(4*dense_unit_div)))]
+        self._dense_stack = torchlayers.DenseStack(
+            self._res_stack.out_features,
+            dense_stack_units,
+            activation=nn.LeakyReLU,
+            dropout=0,
+        )
                              
-        self._prob_out = torch.nn.Linear(curr_width, 1)
+        self._prob_out = torch.nn.Linear(dense_stack_units[-1][1], 1)
         nn.init.xavier_uniform_(self._prob_out.weight)
         
         self._loss_func = torch.nn.MSELoss()
 
-        self._optimizer = torch.optim.NAdam(
-            self.parameters(), max_lr, betas=(0.89, 0.995)
+        self._optimizer = torch.optim.AdamW(
+            self.parameters(), max_lr, betas=(0.89, 0.995), weight_decay=1e-2
         )
-
         
         self._scheduler = torchscheduler.make_cyclic_with_warmup(optimizer=self._optimizer,
                                                                  epoch_batches=epoch_batches,
@@ -104,20 +96,15 @@ class IsTextFeaturesModel(torchmodules.BaseModel):
 
     def forward(self, features):
         x = features.float() / features.norm(dim=-1, keepdim=True)
-        for layer in self._resblocks:
-            x = layer(x)
+        x = self._res_stack(x)
+        x = self._dense_stack(x)
             
         return self._prob_out(x)
-    
-    def _get_forward(self, features):
+
+    def get_text_prob(self, features):
         return self(features).reshape(-1)
 
-    def get_text_prob(self, features, shift_ceil = 1.0):
-        percent_ceil = torch.abs(self(features)) / shift_ceil
-        predicted_shift = 1 - torch.minimum(percent_ceil, torch.tensor([1.0], device=features.device))
-        return predicted_shift.reshape(-1)
-
-    def improve_text_prob(self, features, target_prob=0.96, max_diff=0.03, per_step=0.01,  alpha=0.7, max_divs=10, verbose=False):
+    def improve_text_prob(self, features, target_prob=0.96, max_diff=0.03, per_step=0.001,  alpha=0.7, max_divs=10, verbose=False):
         # TODO: Extract common code with improve rating
         with torch.no_grad():
             if len(features.shape) == 1:
@@ -138,14 +125,12 @@ class IsTextFeaturesModel(torchmodules.BaseModel):
             
             eps_scalar = torch.tensor([1e-33], device=features.device)
             while self.get_text_prob(out_features)[0] <= target_prob and cosine_change < max_diff and num_divs < max_divs:
-                dx = -torch.autograd.functional.jacobian(self._get_forward, out_features.float(), create_graph=True).reshape(out_features.shape).float()
+                dx = -torch.autograd.functional.jacobian(self.get_text_prob, out_features.float(), create_graph=True).reshape(out_features.shape).float()
                 dx_mag = dx.norm(dim=-1, keepdim=True)
                 if dx_mag < eps_scalar:
                     dx /= eps_scalar
-                else:
-                    dx /= dx_mag
                 
-                dx_shift = per_step * dx
+                dx_shift = -per_step * dx
                 
                 prev_out_features = out_features.clone()
                 out_features += dx_shift

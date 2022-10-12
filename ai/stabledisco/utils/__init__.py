@@ -2,8 +2,11 @@ from ai.stabledisco.utils.imageutils import (get_size_fixed_larger_dim,
                                              load_img, resize_img,
                                              scale_size_fixed_larger_dim)
 from ai.stabledisco.utils.mathutils import (calc_singular_vecs, cosine_sim,
+                                            diff_t, ease_in_lin, ease_in_quat,
+                                            ease_out_lin, ease_out_quat,
                                             make_random_feature_shifts,
-                                            make_random_features, norm_t,
+                                            make_random_features, norm_scalars,
+                                            norm_t, normed_sine,
                                             project_to_axis,
                                             random_scalar_norm,
                                             remove_projection)

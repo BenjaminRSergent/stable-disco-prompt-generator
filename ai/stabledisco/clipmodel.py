@@ -196,7 +196,7 @@ class ClipModel(torch.nn.Module):
                 return self._model.encode_text(tokens)
 
             return self._features_from_uniform_end_tokens(tokens, end_idx)
-
+        verbosity=0
         with torch.no_grad():
             if len(tokens) <= step_size:
                 text_features = local_encode_func(torch.stack(tuple(tokens)))

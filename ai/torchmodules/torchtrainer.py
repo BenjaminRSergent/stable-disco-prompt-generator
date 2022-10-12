@@ -120,7 +120,7 @@ class TorchTrainer:
             total_loss += loss.item() * num_to_acc
             running_loss += loss.item() * num_to_acc
 
-            if idx != 0 and idx % print_every == 0:
+            if (idx+1) % print_every == 0:
                 sec_per_batch = (time.perf_counter() - start_time) / print_every
                 batch_per_sec = 1 / sec_per_batch
                 rem_time = sec_per_batch * (len(data_loader) - idx)
@@ -130,7 +130,7 @@ class TorchTrainer:
                     f"{idx:5d}/{len(data_loader):5d} batches | "
                     f"batch/sec {batch_per_sec:5.2f} | "
                     f"rem mins {rem_time/60:5.0f} | "
-                    f"loss {cur_loss:5.5f} | ppl {ppl:8.4f}"
+                    f"loss {cur_loss:5.6f} | ppl {ppl:8.4f}"
                 )
                 if print_learning_rate:
                     print(f"Learning rate: {scheduler.get_last_lr()}")

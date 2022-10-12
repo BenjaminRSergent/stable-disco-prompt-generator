@@ -63,9 +63,9 @@ def estimate_validation(model, data_loader, max_batches=1000, low_change_thresh 
                     
                 if verbose and (idx % print_freq == 0 or con_low_change == req_low_change):
                     if prev_loss != 0:
-                        print(f"Loss is {curr_loss:.3f} changing {change_percent:.4f}% from baseline {prev_loss:.2f}. Consecutive low changes {con_low_change}/{req_low_change}")
+                        print(f"Loss is {curr_loss:.4f} changing {change_percent:.4f}% from baseline {prev_loss:.4f}. Consecutive low changes {con_low_change}/{req_low_change}")
                     else:
-                        print(f"First loss {curr_loss:.2f}")
+                        print(f"First loss {curr_loss:.4f}")
                     print(f"Highest reset was {highest_reset}")
                         
                 if con_low_change == req_low_change:
@@ -74,4 +74,4 @@ def estimate_validation(model, data_loader, max_batches=1000, low_change_thresh 
 
             if idx >= max_batches:
                 break
-        return (loss / idx).cpu().item()
+        return (loss / idx+1).cpu().item()

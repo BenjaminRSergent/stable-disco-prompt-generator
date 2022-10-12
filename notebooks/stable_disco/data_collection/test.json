@@ -1,0 +1,456 @@
+{
+	"guild": {
+		"id": "1002292111942635562",
+		"name": "Stable Diffusion",
+		"iconUrl": "https://cdn.discordapp.com/icons/1002292111942635562/a_c38f6a761f8630401338860caf6ede39.gif"
+	},
+	"channel": {
+		"id": "1005627987435192381",
+		"type": "GuildTextChat",
+		"categoryId": "1005625248214950029",
+		"category": "Wave 2 - Image archive",
+		"name": "dream-49",
+		"topic": null
+	},
+	"dateRange": {
+		"after": null,
+		"before": null
+	},
+	"messages": [{
+			"id": "1005630109056770118",
+			"type": "Default",
+			"timestamp": "2022-08-07T00:15:01.703+00:00",
+			"timestampEdited": null,
+			"callEndedTimestamp": null,
+			"isPinned": false,
+			"content": "!dream walter white angry",
+			"author": {
+				"id": "486226178894725120",
+				"name": "Michael.",
+				"discriminator": "5496",
+				"nickname": "Michael.",
+				"color": "#90C78C",
+				"isBot": false,
+				"avatarUrl": "https://cdn.discordapp.com/avatars/486226178894725120/d8429ac78236f6ea60dee94d53d5e0f7.png?size=512"
+			},
+			"attachments": [],
+			"embeds": [],
+			"stickers": [],
+			"reactions": [],
+			"mentions": []
+		},
+		{
+			"id": "1005630141722022028",
+			"type": "Reply",
+			"timestamp": "2022-08-07T00:15:09.491+00:00",
+			"timestampEdited": null,
+			"callEndedTimestamp": null,
+			"isPinned": false,
+			"content": "Dreamt in `6.75s` for `!dream \"walter white angry\" -S 3013964017`",
+			"author": {
+				"id": "1005205208718114846",
+				"name": "DreamBotMothership",
+				"discriminator": "8548",
+				"nickname": "DreamBotMothership",
+				"color": null,
+				"isBot": true,
+				"avatarUrl": "https://cdn.discordapp.com/avatars/1005205208718114846/339a0afbe8ea3c4497696b039c855802.png?size=512"
+			},
+			"attachments": [{
+				"id": "1005630141466152990",
+				"url": "https://cdn.discordapp.com/attachments/1005627987435192381/1005630141466152990/walter_white_angry_-S_3013964017_ts-1659831309_idx-0.png",
+				"fileName": "walter_white_angry_-S_3013964017_ts-1659831309_idx-0.png",
+				"fileSizeBytes": 316590
+			}],
+			"embeds": [],
+			"stickers": [],
+			"reactions": [],
+			"mentions": [{
+				"id": "486226178894725120",
+				"name": "Michael.",
+				"discriminator": "5496",
+				"nickname": "Michael.",
+				"isBot": false
+			}],
+			"reference": {
+				"messageId": "1005630109056770118",
+				"channelId": "1005627987435192381",
+				"guildId": "1002292111942635562"
+			}
+		},
+		{
+			"id": "1005630178187284480",
+			"type": "Default",
+			"timestamp": "2022-08-07T00:15:18.185+00:00",
+			"timestampEdited": null,
+			"callEndedTimestamp": null,
+			"isPinned": false,
+			"content": "!dream Dwayne Johnson as a rock type Skylander",
+			"author": {
+				"id": "359144473164513280",
+				"name": "A Bit of Pix",
+				"discriminator": "7346",
+				"nickname": "A Bit of Pix",
+				"color": "#90C78C",
+				"isBot": false,
+				"avatarUrl": "https://cdn.discordapp.com/avatars/359144473164513280/1af25d424318b8fcc4c4656f593072d6.png?size=512"
+			},
+			"attachments": [],
+			"embeds": [],
+			"stickers": [],
+			"reactions": [],
+			"mentions": []
+		},
+		{
+			"id": "1005630205831946321",
+			"type": "Default",
+			"timestamp": "2022-08-07T00:15:24.776+00:00",
+			"timestampEdited": null,
+			"callEndedTimestamp": null,
+			"isPinned": false,
+			"content": "!dream astronaut in ocean drowning high noon red water rendered in octane by syd mead -S 25 -i 6 -H 896 -C 10 -A k_euler_ancestral",
+			"author": {
+				"id": "741456252638462043",
+				"name": "dang ol' spaghetti house blues",
+				"discriminator": "0738",
+				"nickname": "dang ol' spaghetti house blues",
+				"color": "#90C78C",
+				"isBot": false,
+				"avatarUrl": "https://cdn.discordapp.com/avatars/741456252638462043/b26ce507780729d69d276b6235958d7a.png?size=512"
+			},
+			"attachments": [],
+			"embeds": [],
+			"stickers": [],
+			"reactions": [],
+			"mentions": []
+		},
+		{
+			"id": "1005630206452715601",
+			"type": "Reply",
+			"timestamp": "2022-08-07T00:15:24.924+00:00",
+			"timestampEdited": null,
+			"callEndedTimestamp": null,
+			"isPinned": false,
+			"content": "```ERROR: unrecognized arguments: 6```\n```usage: !dream [-h] [--height HEIGHT] [--width WIDTH] [--cfg_scale CFG_SCALE]\n              [--number NUMBER] [--separate-images] [--sampler SAMPLER]\n              [--steps STEPS] [--seed SEED]\n              [prompt ...]\n\npositional arguments:\n  prompt\n\noptional arguments:\n  -h, --help\n  --height HEIGHT, -H HEIGHT\n                        [512] height of image (multiple of 64)\n  --width WIDTH, -W WIDTH\n                        [512] width of image (multiple of 64)\n  --cfg_scale CFG_SCALE, -C CFG_SCALE\n                        [7.0] CFG scale factor\n  --number NUMBER, -n NUMBER\n                        [1] number of images\n  --separate-images, -i\n                        Return multiple images as separate files instead of in\n                        grid\n  --sampler SAMPLER, -A SAMPLER\n                        [k_lms] (ddim, plms, k_euler, k_euler_ancestral,\n                        k_heun, k_dpm_2, k_dpm_2_ancestral, k_lms)\n  --steps STEPS, -s STEPS\n                        [50] number of steps\n  --seed SEED, -S SEED  random seed to use\n```",
+			"author": {
+				"id": "1005205208718114846",
+				"name": "DreamBotMothership",
+				"discriminator": "8548",
+				"nickname": "DreamBotMothership",
+				"color": null,
+				"isBot": true,
+				"avatarUrl": "https://cdn.discordapp.com/avatars/1005205208718114846/339a0afbe8ea3c4497696b039c855802.png?size=512"
+			},
+			"attachments": [],
+			"embeds": [],
+			"stickers": [],
+			"reactions": [],
+			"mentions": [{
+				"id": "741456252638462043",
+				"name": "dang ol' spaghetti house blues",
+				"discriminator": "0738",
+				"nickname": "dang ol' spaghetti house blues",
+				"isBot": false
+			}],
+			"reference": {
+				"messageId": "1005630205831946321",
+				"channelId": "1005627987435192381",
+				"guildId": "1002292111942635562"
+			}
+		},
+		{
+			"id": "1005630217060098178",
+			"type": "Reply",
+			"timestamp": "2022-08-07T00:15:27.453+00:00",
+			"timestampEdited": null,
+			"callEndedTimestamp": null,
+			"isPinned": false,
+			"content": "Dreamt in `7.97s` for `!dream \"Dwayne Johnson as a rock type Skylander\" -S 1391728483`",
+			"author": {
+				"id": "1005205208718114846",
+				"name": "DreamBotMothership",
+				"discriminator": "8548",
+				"nickname": "DreamBotMothership",
+				"color": null,
+				"isBot": true,
+				"avatarUrl": "https://cdn.discordapp.com/avatars/1005205208718114846/339a0afbe8ea3c4497696b039c855802.png?size=512"
+			},
+			"attachments": [{
+				"id": "1005630216833609768",
+				"url": "https://cdn.discordapp.com/attachments/1005627987435192381/1005630216833609768/Dwayne_Johnson_as_a_rock_type_Skylander_-S_1391728483_ts-1659831327_idx-0.png",
+				"fileName": "Dwayne_Johnson_as_a_rock_type_Skylander_-S_1391728483_ts-1659831327_idx-0.png",
+				"fileSizeBytes": 399253
+			}],
+			"embeds": [],
+			"stickers": [],
+			"reactions": [],
+			"mentions": [{
+				"id": "359144473164513280",
+				"name": "A Bit of Pix",
+				"discriminator": "7346",
+				"nickname": "A Bit of Pix",
+				"isBot": false
+			}],
+			"reference": {
+				"messageId": "1005630178187284480",
+				"channelId": "1005627987435192381",
+				"guildId": "1002292111942635562"
+			}
+		},
+		{
+			"id": "1005630352187998288",
+			"type": "Default",
+			"timestamp": "2022-08-07T00:15:59.67+00:00",
+			"timestampEdited": null,
+			"callEndedTimestamp": null,
+			"isPinned": false,
+			"content": "!dream highly detailed digital painting of the ruins of a futuristic city inside a transparent sphere in a barren snowy landscape, trending on artstation, award-winning art, melancholic atmosphere, matte painting  -H 576 -W 1024 -n 4 -i",
+			"author": {
+				"id": "113143478543769600",
+				"name": "Vesoir",
+				"discriminator": "2111",
+				"nickname": "Vesoir",
+				"color": "#90C78C",
+				"isBot": false,
+				"avatarUrl": "https://cdn.discordapp.com/avatars/113143478543769600/7d22ca35ec1ec5bfbb1c648360b538df.png?size=512"
+			},
+			"attachments": [],
+			"embeds": [],
+			"stickers": [],
+			"reactions": [],
+			"mentions": []
+		},
+		{
+			"id": "1005630353093955604",
+			"type": "Default",
+			"timestamp": "2022-08-07T00:15:59.886+00:00",
+			"timestampEdited": null,
+			"callEndedTimestamp": null,
+			"isPinned": false,
+			"content": "!dream cobra with head above flowers",
+			"author": {
+				"id": "366446608621109258",
+				"name": "Benji",
+				"discriminator": "8233",
+				"nickname": "Beniji",
+				"color": "#90C78C",
+				"isBot": false,
+				"avatarUrl": "https://cdn.discordapp.com/avatars/366446608621109258/d4560a1a229bc0b91e2c5fe16d57b9da.png?size=512"
+			},
+			"attachments": [],
+			"embeds": [],
+			"stickers": [],
+			"reactions": [],
+			"mentions": []
+		},
+    {
+      "id": "1014340726336802837",
+      "type": "Reply",
+      "timestamp": "2022-08-31T01:07:54.698+00:00",
+      "timestampEdited": null,
+      "callEndedTimestamp": null,
+      "isPinned": false,
+      "content": "Dreamt for @Gryphon -- `/dream prompt:test seed:2803508492`",
+      "author": {
+        "id": "1005205208718114846",
+        "name": "DreamBotMothership",
+        "discriminator": "8548",
+        "nickname": "DreamBotMothership",
+        "color": null,
+        "isBot": true,
+        "avatarUrl": "https://cdn.discordapp.com/avatars/1005205208718114846/339a0afbe8ea3c4497696b039c855802.png?size=512"
+      },
+      "attachments": [
+        {
+          "id": "1014340726202564729",
+          "url": "https://cdn.discordapp.com/attachments/1014332917947830342/1014340726202564729/test__seed-2803508492_ts-1661908074_idx-0.png",
+          "fileName": "test__seed-2803508492_ts-1661908074_idx-0.png",
+          "fileSizeBytes": 485497
+        }
+      ],
+      "embeds": [],
+      "stickers": [],
+      "reactions": [],
+      "mentions": [
+        {
+          "id": "483369278595399702",
+          "name": "Gryphon",
+          "discriminator": "4367",
+          "nickname": "Gryphon",
+          "isBot": false
+        }
+      ],
+      "reference": {
+        "messageId": "1014340676453937183",
+        "channelId": "1014332917947830342",
+        "guildId": "1002292111942635562"
+      }
+    },
+    {
+      "id": "1005630097300135976",
+      "type": "Reply",
+      "timestamp": "2022-08-07T00:14:58.9+00:00",
+      "timestampEdited": null,
+      "callEndedTimestamp": null,
+      "isPinned": false,
+      "content": "Dreamt in `5.61s` for `!dream \"an apple\" -S 3640807225`",
+      "author": {
+        "id": "1005205208718114846",
+        "name": "DreamBotMothership",
+        "discriminator": "8548",
+        "nickname": "DreamBotMothership",
+        "color": null,
+        "isBot": true,
+        "avatarUrl": "https://cdn.discordapp.com/avatars/1005205208718114846/339a0afbe8ea3c4497696b039c855802.png?size=512"
+      },
+      "attachments": [
+        {
+          "id": "1005630096960389270",
+          "url": "https://cdn.discordapp.com/attachments/1005627781566185532/1005630096960389270/an_apple_-S_3640807225_ts-1659831298_idx-0.png",
+          "fileName": "an_apple_-S_3640807225_ts-1659831298_idx-0.png",
+          "fileSizeBytes": 419735
+        }
+      ],
+      "embeds": [],
+      "stickers": [],
+      "reactions": [],
+      "mentions": [
+        {
+          "id": "400665810353389568",
+          "name": "pnivek",
+          "discriminator": "7777",
+          "nickname": "pnivek",
+          "isBot": false
+        }
+      ],
+      "reference": {
+        "messageId": "1005630071551303763",
+        "channelId": "1005627781566185532",
+        "guildId": "1002292111942635562"
+      }
+    },
+    {
+      "id": "1005598329096392764",
+      "type": "Reply",
+      "timestamp": "2022-08-06T22:08:44.77+00:00",
+      "timestampEdited": null,
+      "callEndedTimestamp": null,
+      "isPinned": false,
+      "content": "Dreamt in `180.83s` for `!dream \"A monolith standing in the desert, megastructure\" -H 1024 -n 6 -i -s 100 -S 3640807225` The seeds for each individual image are: [3640807225, 2986930943, 4186756095, 2865075967, 3571718911, 3723563263]",
+      "author": {
+        "id": "1005205208718114846",
+        "name": "DreamBotMothership",
+        "discriminator": "8548",
+        "nickname": "DreamBotMothership",
+        "color": null,
+        "isBot": true,
+        "avatarUrl": "https://cdn.discordapp.com/avatars/1005205208718114846/339a0afbe8ea3c4497696b039c855802.png?size=512"
+      },
+      "attachments": [
+        {
+          "id": "1005630096960389270",
+          "url": "https://cdn.discordapp.com/attachments/1005627781566185532/1005630096960389270/an_apple_-S_3640807225_ts-1659831298_idx-0.png",
+          "fileName": "an_apple_-S_3640807225_ts-1659831298_idx-0.png",
+          "fileSizeBytes": 419735
+        },
+        {
+          "id": "1005598327234117632",
+          "url": "https://cdn.discordapp.com/attachments/1005597211591200828/1005598327234117632/A_monolith_standing_in_the_desert_megastructure_-H_1024_-n_6_-i_-s_100_-S_1121557556_ts-1659823723_idx-0.png",
+          "fileName": "A_monolith_standing_in_the_desert_megastructure_-H_1024_-n_6_-i_-s_100_-S_1121557556_ts-1659823723_idx-0.png",
+          "fileSizeBytes": 750384
+        },
+        {
+          "id": "1005598327557066833",
+          "url": "https://cdn.discordapp.com/attachments/1005597211591200828/1005598327557066833/A_monolith_standing_in_the_desert_megastructure_-H_1024_-n_6_-i_-s_100_-S_1121557556_ts-1659823723_idx-1.png",
+          "fileName": "A_monolith_standing_in_the_desert_megastructure_-H_1024_-n_6_-i_-s_100_-S_1121557556_ts-1659823723_idx-1.png",
+          "fileSizeBytes": 926098
+        },
+        {
+          "id": "1005598327888412762",
+          "url": "https://cdn.discordapp.com/attachments/1005597211591200828/1005598327888412762/A_monolith_standing_in_the_desert_megastructure_-H_1024_-n_6_-i_-s_100_-S_1121557556_ts-1659823723_idx-2.png",
+          "fileName": "A_monolith_standing_in_the_desert_megastructure_-H_1024_-n_6_-i_-s_100_-S_1121557556_ts-1659823723_idx-2.png",
+          "fileSizeBytes": 1038339
+        },
+        {
+          "id": "1005598328207196221",
+          "url": "https://cdn.discordapp.com/attachments/1005597211591200828/1005598328207196221/A_monolith_standing_in_the_desert_megastructure_-H_1024_-n_6_-i_-s_100_-S_1121557556_ts-1659823723_idx-3.png",
+          "fileName": "A_monolith_standing_in_the_desert_megastructure_-H_1024_-n_6_-i_-s_100_-S_1121557556_ts-1659823723_idx-3.png",
+          "fileSizeBytes": 907578
+        },
+        {
+          "id": "1005598328546926592",
+          "url": "https://cdn.discordapp.com/attachments/1005597211591200828/1005598328546926592/A_monolith_standing_in_the_desert_megastructure_-H_1024_-n_6_-i_-s_100_-S_1121557556_ts-1659823723_idx-4.png",
+          "fileName": "A_monolith_standing_in_the_desert_megastructure_-H_1024_-n_6_-i_-s_100_-S_1121557556_ts-1659823723_idx-4.png",
+          "fileSizeBytes": 1033769
+        },
+        {
+          "id": "1005598328844726282",
+          "url": "https://cdn.discordapp.com/attachments/1005597211591200828/1005598328844726282/A_monolith_standing_in_the_desert_megastructure_-H_1024_-n_6_-i_-s_100_-S_1121557556_ts-1659823723_idx-5.png",
+          "fileName": "A_monolith_standing_in_the_desert_megastructure_-H_1024_-n_6_-i_-s_100_-S_1121557556_ts-1659823723_idx-5.png",
+          "fileSizeBytes": 841187
+        }
+      ],
+      "embeds": [],
+      "stickers": [],
+      "reactions": [],
+      "mentions": [
+        {
+          "id": "147927142045319170",
+          "name": "TwoDukes",
+          "discriminator": "1234",
+          "nickname": "TwoDukes",
+          "isBot": false
+        }
+      ],
+      "reference": {
+        "messageId": "1005597558061674588",
+        "channelId": "1005597211591200828",
+        "guildId": "1002292111942635562"
+      }
+    },
+    {
+      "id": "1005598407898955876",
+      "type": "Reply",
+      "timestamp": "2022-08-06T22:09:03.558+00:00",
+      "timestampEdited": null,
+      "callEndedTimestamp": null,
+      "isPinned": false,
+      "content": "Dreamt in `138.70s` for `!dream \"portrait color photo of an unbrushed man with smooth skin instead of a face, but with one ordinary bright giant eye with eyelashes in the center of the forehead, high quality photo, 85mm\" -H 832 -W 576 -n 4 -s 100 -S 27` The seeds for each individual image are: [27, 28, 29, 40]",
+      "author": {
+        "id": "1005205208718114846",
+        "name": "DreamBotMothership",
+        "discriminator": "8548",
+        "nickname": "DreamBotMothership",
+        "color": null,
+        "isBot": true,
+        "avatarUrl": "https://cdn.discordapp.com/avatars/1005205208718114846/339a0afbe8ea3c4497696b039c855802.png?size=512"
+      },
+      "attachments": [
+        {
+          "id": "1005598407471153172",
+          "url": "https://cdn.discordapp.com/attachments/1005597211591200828/1005598407471153172/portrait_color_photo_of_an_unbrushed_man_with_smooth_skin_instead_of_a_face_but_with_one_ordinary_bright_giant_eye_with_eyelashes_in_th_-H_832_-W_576_-n_4_-s_100_-S_1495737058_ts-1659823742_idx-0.png",
+          "fileName": "portrait_color_photo_of_an_unbrushed_man_with_smooth_skin_instead_of_a_face_but_with_one_ordinary_bright_giant_eye_with_eyelashes_in_th_-H_832_-W_576_-n_4_-s_100_-S_1495737058_ts-1659823742_idx-0.png",
+          "fileSizeBytes": 3237225
+        }
+      ],
+      "embeds": [],
+      "stickers": [],
+      "reactions": [],
+      "mentions": [
+        {
+          "id": "721371791494479962",
+          "name": "₀✖¹",
+          "discriminator": "5677",
+          "nickname": "₀✖¹",
+          "isBot": false
+        }
+      ],
+      "reference": {
+        "messageId": "1005597806175715328",
+        "channelId": "1005597211591200828",
+        "guildId": "1002292111942635562"
+      }
+    }
+	]
+
+}

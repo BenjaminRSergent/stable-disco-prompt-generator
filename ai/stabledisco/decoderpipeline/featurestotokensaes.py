@@ -303,7 +303,7 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         self._mask_dict[self.get_mask_key(ascii_only=True, no_banned=False)] = ascii_mask
         
         banned_mask = torch.ones(len(clip_tokenizer.encoder), device="cuda")
-        banned_words = ["nude", "naked", "kid", "child", "lolita", "cum", "xxx", "anus"]
+        banned_words = ["jpg", "nude", "naked", "kid", "child", "lolita", "cum", "xxx", "anus", "ass", "butt"]
         for word in banned_words:
             banned_mask[clip_tokenizer.encoder[word + '</w>']] = 0
             

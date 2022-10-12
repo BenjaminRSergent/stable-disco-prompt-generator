@@ -12,7 +12,7 @@ from ai.stabledisco.decoderpipeline.lowerfeaturelayers import \
 
 class KnowledgeTransferNetwork(torchmodules.BaseModel):
     name="KnowledgeTransferModel"
-    def __init__(self, student, teacher, teacher_percent=0.25, name_suffix="", max_lr=4e-4, min_lr_divisor=20, epoch_batches=150000, step_size_up_epoch_mul=1, warmup_period_epoch_mul=1, gamma=0.75, last_epoch=-1, device=None):
+    def __init__(self, student, teacher, teacher_percent=0.5, name_suffix="", max_lr=4e-4, min_lr_divisor=20, epoch_batches=150000, step_size_up_epoch_mul=1, warmup_period_epoch_mul=1, gamma=0.75, last_epoch=-1, device=None):
         super().__init__(KnowledgeTransferNetwork.name+name_suffix, device=device)
         self._student = student
         self._teacher = teacher

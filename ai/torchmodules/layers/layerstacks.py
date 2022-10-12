@@ -60,6 +60,9 @@ class ResDenseStack(nn.Module):
         dropout=0.2,
     ) -> None:
         super().__init__()
+        
+        self.in_features = input_size
+        self.out_features = input_size
 
         self.resblocks = nn.Sequential(
             *[
