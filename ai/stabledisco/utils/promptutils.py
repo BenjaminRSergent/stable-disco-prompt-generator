@@ -37,3 +37,12 @@ def get_single_word_token(word):
     if tokenized[2].item() != sdconsts.eot_token:
         raise Exception(f"Input {word} consists of multiple tokens {tokenized}")
     return tokenized[1].item()
+
+def rev_tokens(text_tokens):
+    if len(text_tokens.shape) > 1:
+        text_tokens.view(1, text_tokens.size(0))
+    flipped = torch.flip(text_tokens, dims=(1,))
+    end_idx_arg = torch.argwhere(flipped == sdconsts.eot_token)[:,1]
+    for idx in range(flipped.size(0)):
+        flipped[idx] = torch.cat((flipped[idx,end_idx_arg[idx]:], flipped[idx,:end_idx_arg[idx]]))
+    return flipped

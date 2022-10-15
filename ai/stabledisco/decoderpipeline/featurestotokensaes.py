@@ -50,6 +50,8 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         self._ascii_mask = None
         self._banned_mask = None
         self._bool_to_mask = {}
+        
+        self._is_rev = False
         self._dtype = clip_model.dtype
 
         self._clip_model = clip_model
@@ -108,6 +110,18 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
             ),
             num_layers=int(self._transformer_layers*decoder_mul),
         )
+        
+        self._rev_decoder = nn.TransformerDecoder(
+            nn.TransformerDecoderLayer(
+                d_model=sdconsts.feature_width,
+                nhead=self._transformer_heads,
+                dim_feedforward=block_width,
+                activation=torchlayers.QuickGELU(),
+                dropout=0.0,
+                batch_first=True,
+            ),
+            num_layers=int(self._transformer_layers*decoder_mul),
+        )
 
         self._vocab_out = torch.nn.Linear(sdconsts.feature_width, sdconsts.num_tokens)
         nn.init.xavier_uniform_(self._vocab_out.weight)
@@ -145,6 +159,21 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         
         for param in self._token_embedding.parameters():
             param.requires_grad = False
+            
+    def clone_forward_to_rev(self):
+        self._rev_decoder = copy.deepcopy(self._decoder)
+        
+    def set_rev_mode(self, is_rev, adjust_frozen=False):
+        self._is_rev = is_rev
+        if not adjust_frozen:
+            return
+        if is_rev:
+            self.freeze()
+            for param in self._rev_decoder.parameters():
+                param.requires_grad = True
+        else:
+            self.unfreeze()
+        
 
     def _calc_batch_loss(self, x_inputs: torch.Tensor, y_targets: torch.Tensor, target_prob: torch.Tensor = None):
         with torch.autocast(device_type="cuda"):
@@ -163,7 +192,7 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         self._clip_model = clip_model
         
 
-    def forward(self, x_inputs, y_targets=None, reverse=False):
+    def forward(self, x_inputs, y_targets=None):
         if y_targets is None:
             latent_img_features, tgt_tokens = x_inputs
         else:
@@ -178,17 +207,13 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
             + self._positional_embedding
         )
 
-        if reverse:
-            # TODO: implement predicting previous token from the end
-            raise NotImplementedError("Reverse Decoding is not implemented")
-            """
-            decoder_out = self._rev_decoder(encoder_out, 
+        if self._is_rev:
+            decoder_out = self._rev_decoder(
                 memory=encoder_out,
                 tgt=tgt,
                 tgt_mask=self._target_mask,
                 tgt_key_padding_mask=(tgt_tokens == 0),
             )
-            """
         else:
             decoder_out = self._decoder(
                 memory=encoder_out,
