@@ -41,7 +41,8 @@ class UpgradeConfig:
 
 class BeamSearchConfig:
     # Default values are based on a bayesian optimization parameter search
-    def __init__(self, model_beams=40, clip_beams=40, num_inter_beams=3500,
+    def __init__(self, model_beams=40, clip_beams=40,
+                 num_inter_beams=3500, max_inter_beams=(sdconsts.num_tokens-2)//4, inter_beam_mul = 2,
                  rating_weight=1.0, clip_weight=2, 
                  enable_upgrades=True,
                  ascii_only=True, allow_banned=False, add_evolution_beams=False,
@@ -49,7 +50,10 @@ class BeamSearchConfig:
         self.model_beams = model_beams
         self.clip_beams = clip_beams
         self.allow_banned = allow_banned
+        
+        self.inter_beam_mul = inter_beam_mul
         self.num_inter_beams = num_inter_beams
+        self.max_inter_beams = max_inter_beams
 
         self.enable_upgrades = enable_upgrades
         self.rating_weight = rating_weight
@@ -96,7 +100,7 @@ class BeamSearcher:
             self.config = search_config
             self.upgrade_config = upgrade_config
             
-            
+            self.curr_inter_beams = search_config.num_inter_beams
             self.times_upgraded = 0
             self.last_upgrade_iter = 0
 
@@ -259,7 +263,7 @@ class BeamSearcher:
         tokens_added = candidates[0].prev_tokens.size(0)+1
         
         upgrades_allowed = search_state.config.enable_upgrades and tokens_added >= search_state.upgrade_config.upgrade_iter_start
-        if upgrades_allowed and search_state.iter_without_improvement >= search_state.upgrade_config.end_upgrade_threshold:
+        if upgrades_allowed and search_state.iter_without_improvement >= 0 and search_state.curr_inter_beams == search_state.config.max_inter_beams:
             last_score = self._upgrader._calculator.score_tokens(search_state.features, top_beam)[0]
             beam_eot_idx = sdutils.find_end_idx(top_beam)
             top_beam, last_score = self._upgrade_end_tokens(search_state, top_beam, beam_eot_idx, last_score)
@@ -300,11 +304,16 @@ class BeamSearcher:
             search_state.times_upgraded += 1
             
             
+        no_improve_mul = 1.5
         if cosine_sim > search_state.best_match_cosine:
+            search_state.curr_inter_beams = max(search_state.curr_inter_beams/(no_improve_mul**2), search_state.config.num_inter_beams)
             search_state.iter_without_improvement = 0
             search_state.best_match_cosine = cosine_sim
             search_state.final_beam_tokens.append(top_beam)
+        else:
+            search_state.curr_inter_beams = min(search_state.curr_inter_beams*no_improve_mul, search_state.config.max_inter_beams)
             
+        print(search_state.curr_inter_beams)
     def _upgrade_end_tokens(self, search_state, new_beam, beam_eot_idx, last_score,
                             final_token_cands = sdconsts.num_tokens//4, penult_token_cands=sdconsts.num_tokens//10):
         
@@ -384,8 +393,10 @@ class BeamSearcher:
 
         # Linearly decrease candidates to 1024
         num_candidates = max(int(upgrade_config.baseline_cands * (1 - tokens_since_start/start_to_end)), upgrade_config.min_cands)
-        cand_mul_base = 1.5
-        cands_mul = int(3*cand_mul_base**(search_state.iter_without_improvement-search_state.upgrade_config.full_upgrade_threshold+1))
+        cand_exp_base = 1.5
+        cand_mul_base = 2
+        cands_mul = int(cand_mul_base*cand_exp_base**(search_state.iter_without_improvement-search_state.upgrade_config.full_upgrade_threshold))
+        cands_mul = max(cands_mul, 3)
         min_cands = num_candidates
         max_cands = min(min_cands * cands_mul, sdconsts.num_tokens//4)
         first_pass = max_cands
@@ -434,6 +445,7 @@ class BeamSearcher:
                     print(f"Pass {pass_num}  at {num_candidates} from {start_idx} to {end_idx} of {tokens_added} did not increase score")
                 last_score = new_score
             """
+        search_state.iter_without_improvement = 0
         return new_beam, new_score
 
     def _get_candidate_beams(self, search_state):
@@ -451,7 +463,7 @@ class BeamSearcher:
 
         # Find next token choices with the highest cumulative probability as 1D indices
         next_probs = torch.cat(new_probs).view(-1)
-        next_beam_scores, candidate_idxs = next_probs.topk(search_state.config.num_inter_beams, dim=-1)
+        next_beam_scores, candidate_idxs = next_probs.topk(int(search_state.curr_inter_beams), dim=-1)
         search_state.next_beam_scores = next_beam_scores
 
         # Convert the 1D indices into 2D to associate each with their parent to get their previous tokens

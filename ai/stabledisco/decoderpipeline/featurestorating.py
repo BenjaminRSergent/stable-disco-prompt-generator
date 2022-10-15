@@ -145,7 +145,7 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
 
                 
                 cosine_change = abs(1.0 - (features.unsqueeze(0) @ out_features.T))
-
+                
                 if mid_rating > best_out_score and cosine_change < max_diff:
                     best_out_score = mid_rating
                     best_out_features = out_features.clone()

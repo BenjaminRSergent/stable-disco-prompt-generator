@@ -104,7 +104,7 @@ class IsTextFeaturesModel(torchmodules.BaseModel):
     def get_text_prob(self, features):
         return self(features).reshape(-1)
 
-    def improve_text_prob(self, features, target_prob=0.96, max_diff=0.03, per_step=0.001,  alpha=0.7, max_divs=10, verbose=False):
+    def improve_text_prob(self, features, target_prob=0.96, max_diff=0.03, per_step=1,  alpha=0.75, max_divs=10, verbose=False):
         # TODO: Extract common code with improve rating
         with torch.no_grad():
             if len(features.shape) == 1:

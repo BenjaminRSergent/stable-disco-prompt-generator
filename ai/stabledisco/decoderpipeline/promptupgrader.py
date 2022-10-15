@@ -206,7 +206,7 @@ class PromptUpgrader:
             return state.get_best()
         
     def add_tokens(self, target_features, prompt, add_stride=3, max_tokens=sdconsts.prompt_token_len,
-                   new_token_candidates=all_tokens_cnt//8, refine_mul = 1/2, final_mul=1/4, state=None):
+                   new_token_candidates=all_tokens_cnt//5, refine_mul = 1/2, final_mul=1/2, state=None):
         if not state:
             state = self._create_state(target_features, prompt)
         prompt_end = state.get_end_idx()
