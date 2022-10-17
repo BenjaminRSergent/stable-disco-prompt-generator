@@ -101,10 +101,16 @@ class TorchTrainer:
 
         device = model.get_device()
         for idx, data in enumerate(data_loader):
-            x_inputs, y_targets = data
+            
 
             with torch.autocast(device_type="cuda"):
-                loss = model.calc_loss(x_inputs.to(device, non_blocking=True), y_targets.to(device, non_blocking=True)) / num_to_acc
+                if issubclass(type(data), dict):
+                    torchutils.dict_to_device(data, device)
+                    loss = model.calc_loss(**data) / num_to_acc
+                else:
+                    for idx in range(len(data)):
+                        data[idx] = data[idx].to(device, non_blocking=True)
+                    loss = model.calc_loss(*data) / num_to_acc
             # Scales the loss, and calls backward()
             # to create scaled gradients
             scaler.scale(loss).backward()

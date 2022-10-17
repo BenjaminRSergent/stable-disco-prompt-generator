@@ -47,9 +47,13 @@ def estimate_validation(model, data_loader, max_batches=1000, low_change_thresh 
         loss = 0
         
         for idx, data in enumerate(data_loader):
-            features, tokens = data
-
-            loss += model.calc_loss(features.to(device, non_blocking=True), tokens.to(device, non_blocking=True))
+            if issubclass(type(data), dict):
+                torchutils.dict_to_device(data)
+                loss += model.calc_loss(**data)
+            else:
+                data = (data[0].to(model.device, non_blocking=True), data[1].to(model.device, non_blocking=True))
+                loss += model.calc_loss(*data)
+                
             if idx % check_freq == 0:
                 curr_loss = loss / (idx+1)
                 change_percent = abs(curr_loss - prev_loss)/prev_loss

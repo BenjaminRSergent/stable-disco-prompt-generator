@@ -32,16 +32,11 @@ class BaseModel(nn.Module):
         for param in self.parameters():
             param.requires_grad = True
 
-    def calc_loss(self, x_inputs=None, y_targets=None):
-        if issubclass(type(x_inputs), DataLoader):
-            return self._calc_iterable_loss(x_inputs)
+    def calc_loss(self, *args, **kwargs):
+        if len(args) == 1 and issubclass(type(args[0]), DataLoader):
+            return self._calc_iterable_loss(*args, **kwargs)
 
-        if y_targets is None:
-            raise Exception(
-                "First argument is not a loader and did not provide targets"
-            )
-
-        return self._calc_batch_loss(x_inputs, y_targets)
+        return self._calc_batch_loss(*args, **kwargs)
 
     def _calc_iterable_loss(self, data_loader, print_every=250):
         val_loss = 0

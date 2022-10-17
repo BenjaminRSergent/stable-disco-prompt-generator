@@ -61,3 +61,10 @@ def refresh_cuda_memory():
         tensor.data = tensor.to(device)
         if isinstance(tensor, torch.nn.Parameter) and tensor.grad is not None:
             tensor.grad.data = tensor.grad.to(device)
+
+def dict_to_device(data, device=None):
+    if device is None:
+        device = get_default_device()
+    for key, val in data.items():
+        data[key] = val.to(device, non_blocking=True)
+    return data

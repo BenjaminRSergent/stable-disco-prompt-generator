@@ -5,7 +5,7 @@ import ai.torchmodules.scheduler as torchscheduler
 import ai.torchmodules.utils as torchutils
 import torch
 import torch.nn as nn
-import ai.stabledisco.constants as sdconsts
+import ai.stabledisco.utils as sdutils
 from ai.stabledisco.decoderpipeline.knowledgetransfernetwork import \
     KnowledgeTransferNetwork
 from ai.stabledisco.decoderpipeline.lowerfeaturelayers import \
@@ -104,7 +104,7 @@ class IsTextFeaturesModel(torchmodules.BaseModel):
     def get_text_prob(self, features):
         return self(features).reshape(-1)
 
-    def improve_text_prob(self, features, target_prob=0.96, max_diff=0.03, per_step=1,  alpha=0.75, max_divs=10, verbose=False):
+    def improve_text_prob(self, features, target_prob=0.96, max_diff=0.03, per_step=1,  alpha=0.9, max_divs=30, verbose=False):
         # TODO: Extract common code with improve rating
         with torch.no_grad():
             if len(features.shape) == 1:
@@ -123,9 +123,12 @@ class IsTextFeaturesModel(torchmodules.BaseModel):
             con_worse = 0
             num_divs = 0
             
+            def get_adjusted_prob(other):
+                return self.get_text_prob(other) + 3*sdutils.cosine_sim(features,other)/4
+            
             eps_scalar = torch.tensor([1e-33], device=features.device)
             while self.get_text_prob(out_features)[0] <= target_prob and cosine_change < max_diff and num_divs < max_divs:
-                dx = -torch.autograd.functional.jacobian(self.get_text_prob, out_features.float(), create_graph=True).reshape(out_features.shape).float()
+                dx = -torch.autograd.functional.jacobian(get_adjusted_prob, out_features.float(), create_graph=True).reshape(out_features.shape).float()
                 dx_mag = dx.norm(dim=-1, keepdim=True)
                 if dx_mag < eps_scalar:
                     dx /= eps_scalar

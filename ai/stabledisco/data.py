@@ -156,18 +156,21 @@ class PipelineDataset(Dataset):
         return ret
 
 
+# TODO: add small noise to data
 class DirectTextFeaturesSet(Dataset):
-    def __init__(self, features, tokens, start_idx, end_idx, shuffle=True):
+    def __init__(self, features, tokens=None, rev_tokens=None, start_idx=0, end_idx=-1, shuffle=True):
         self._all_features = features
         self._all_tokens = tokens
+        self._all_rev_tokens = rev_tokens
 
         self._start_idx = start_idx
+        if end_idx == -1:
+            end_idx = len(self._all_features)
         self._end_idx = end_idx
         self._shuffle = shuffle
         self._device = torchutils.get_default_device()
 
         self._data_idxs = None
-        # TODO: Add device?
 
         self._prepare_data()
 
@@ -187,7 +190,14 @@ class DirectTextFeaturesSet(Dataset):
 
     def __getitem__(self, idx):
         data_idx = self._data_idxs[idx] if self._data_idxs is not None else idx + self._start_idx
-        ret = ( self._all_tokens[data_idx], self._all_features[data_idx])
+        ret = {
+            "features": self._all_features[data_idx]
+        }
+        if self._all_tokens is not None:
+            ret["tokens"] = self._all_tokens[idx]
+        if self._all_rev_tokens is not None:
+            ret["rev_tokens"] = self._all_rev_tokens[idx]
+            
         if idx == self._end_idx - 1:
             self._prepare_data()
 
@@ -403,8 +413,9 @@ def get_pipeline_data_loader(
     return train_data_loader, test_data_loader
 
 def get_tokens_to_features(
-    text_tokens,
     features,
+    tokens=None,
+    rev_tokens=None,
     batch_size=500,
     val_split=0.05,
     num_workers=8,
@@ -419,20 +430,23 @@ def get_tokens_to_features(
     if not isinstance(features, torch.Tensor):
         features = torch.tensor(np.array(features).astype(np.float32))
     """     
-    torch.int
-    training_idx, val_idx = torchutils.get_split_idxs(text_tokens.size(0), val_split)
+    training_idx, val_idx = torchutils.get_split_idxs(features.size(0), val_split)
     
     train_data_set = DirectTextFeaturesSet(
-        text_tokens,
         features,
-        *training_idx,
+        tokens=tokens,
+        rev_tokens=rev_tokens,
+        start_idx=training_idx[0],
+        end_idx=training_idx[1],
         shuffle=shuffle,
     )
     if val_split != 0:
         val_data_set = DirectTextFeaturesSet(
-            text_tokens,
             features,
-            *val_idx,
+            tokens=tokens,
+            rev_tokens=rev_tokens, 
+            start_idx=val_idx[0],
+            end_idx=val_idx[1],
             shuffle=shuffle,
         )
     else:

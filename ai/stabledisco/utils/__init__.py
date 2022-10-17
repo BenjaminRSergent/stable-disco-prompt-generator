@@ -15,5 +15,8 @@ from ai.stabledisco.utils.modelutils import (load_clip_model,
                                              load_sd_model_from_config)
 from ai.stabledisco.utils.promptutils import (find_end_idx,
                                               get_single_word_token,
-                                              random_prompt_combo)
+                                              random_prompt_combo,
+                                              change_rev,
+                                              rev_tokens,
+                                              is_rev_tokens)
 from ai.stabledisco.utils.textutils import decode_clip_tokens

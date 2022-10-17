@@ -1,4 +1,5 @@
 import ai.stabledisco.constants as sdconsts
+import ai.stabledisco.utils as sdutils
 import ai.torchmodules as torchmodules
 import ai.torchmodules.layers as torchlayers
 import ai.torchmodules.scheduler as torchscheduler
@@ -107,7 +108,7 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
 
             return top_words, top_ratings
 
-    def improve_rating(self, features, target_rating=9.0, max_diff=0.05, per_step=0.01,  alpha=0.5, patience=5, max_divs=10, verbose=False):
+    def improve_rating(self, features, target_rating=9.0, max_diff=0.05, per_step=0.1,  alpha=0.9, patience=5, max_divs=80, verbose=False):
         with torch.no_grad():
             if len(features.shape) == 1:
                 features = features.view(1, -1)
@@ -120,12 +121,16 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
 
             best_out_features = out_features.clone()
             best_out_score = before_rating
+            
+            
+            def get_adjusted_rating(other):
+                return self.get_rating(other) + sdutils.cosine_sim(features,other)
 
             prev_rating = before_rating
             con_worse = 0
             num_divs = 0
             while self.get_rating(out_features)[0] <= target_rating and cosine_change < max_diff and num_divs < max_divs:
-                dx = torch.autograd.functional.jacobian(self.get_rating, out_features.float(), create_graph=True).reshape(out_features.shape)
+                dx = torch.autograd.functional.jacobian(get_adjusted_rating, out_features.float(), create_graph=True).reshape(out_features.shape)
 
                 dx_norm = dx / dx.norm(dim=-1, keepdim=True)
 

@@ -3,6 +3,7 @@ import re
 import typing
 
 import ai.stabledisco.constants as sdconsts
+import ai.stabledisco.utils as sdutils
 import ai.torchmodules as torchmodules
 import ai.torchmodules.layers as torchlayers
 import torch
@@ -15,7 +16,7 @@ from clip.clip import _tokenizer as clip_tokenizer
 
 
 class FeaturesToTokensAesModel(torchmodules.BaseModel):
-    name = "FeaturesToTokensAesModelV2"
+    name = "FeaturesToTokensAesModelV3"
     
     @staticmethod
     def build_large(clip_model: nn.Module, freeze_embedding=True):
@@ -51,7 +52,6 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         self._banned_mask = None
         self._bool_to_mask = {}
         
-        self._is_rev = False
         self._dtype = clip_model.dtype
 
         self._clip_model = clip_model
@@ -162,69 +162,69 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
             
     def clone_forward_to_rev(self):
         self._rev_decoder = copy.deepcopy(self._decoder)
-        
-    def set_rev_mode(self, is_rev, adjust_frozen=False):
-        self._is_rev = is_rev
-        if not adjust_frozen:
-            return
-        if is_rev:
-            self.freeze()
-            for param in self._rev_decoder.parameters():
-                param.requires_grad = True
-        else:
-            self.unfreeze()
-        
 
-    def _calc_batch_loss(self, x_inputs: torch.Tensor, y_targets: torch.Tensor, target_prob: torch.Tensor = None):
+    def _calc_batch_loss(self, features: torch.Tensor, tokens: torch.Tensor = None, rev_tokens: torch.Tensor = None):
         with torch.autocast(device_type="cuda"):
-            outputs = self((x_inputs, y_targets.long()))
-            if y_targets.dtype.is_floating_point:
-                return self._loss_func(
-                outputs.permute(0, 2, 1), y_targets
-                )
-            else:
-                return self._loss_func(
-                    outputs.permute(0, 2, 1)[:, :, :-1], y_targets[:, 1:].long()
-                )
-
+            outputs = self(features=features, tokens=tokens, rev_tokens=rev_tokens)
             
+            if rev_tokens is None:
+                return self._calc_loss(outputs, tokens)
+            elif tokens is None:
+                return self._calc_loss(outputs, rev_tokens)
+
+            return (self._calc_loss(outputs[0], tokens) + self._calc_loss(outputs[1], rev_tokens))/2
+                
+    def _calc_loss(self, output, targets):
+        if targets.dtype.is_floating_point:
+            return self._loss_func(
+                output.permute(0, 2, 1), targets
+            )
+        else:
+            return self._loss_func(
+                output.permute(0, 2, 1)[:, :, :-1], targets[:, 1:].long()
+            )
+        
     def set_clip_model(self, clip_model: nn.Module):
         self._clip_model = clip_model
         
 
-    def forward(self, x_inputs, y_targets=None):
-        if y_targets is None:
-            latent_img_features, tgt_tokens = x_inputs
-        else:
-            latent_img_features, tgt_tokens = x_inputs, y_targets
-        latent_img_features = latent_img_features / latent_img_features.norm(
+    def forward(self, features, tokens=None, rev_tokens=None):
+        features = features / features.norm(
             dim=-1, keepdim=True
         )
-        encoder_out = self.features_to_memory(latent_img_features)
+        encoder_out = self.features_to_memory(features)
 
-        tgt = (
-            self._token_embedding(tgt_tokens)
-            + self._positional_embedding
-        )
-
-        if self._is_rev:
-            decoder_out = self._rev_decoder(
-                memory=encoder_out,
-                tgt=tgt,
-                tgt_mask=self._target_mask,
-                tgt_key_padding_mask=(tgt_tokens == 0),
+        if tokens is not None:
+            tgt = (
+                self._token_embedding(tokens)
+                + self._positional_embedding
             )
-        else:
             decoder_out = self._decoder(
                 memory=encoder_out,
                 tgt=tgt,
                 tgt_mask=self._target_mask,
-                tgt_key_padding_mask=(tgt_tokens == 0),
+                tgt_key_padding_mask=(tokens == 0),
             )
-
-        vocab_out = self._vocab_out(decoder_out)
-
-        return vocab_out
+            forward_out = self._vocab_out(decoder_out)
+            if rev_tokens is None:
+                return forward_out
+            
+        if rev_tokens is not None:
+            rev_tgt = (
+                self._token_embedding(rev_tokens)
+                + self._positional_embedding
+            )
+            rev_decoder_out = self._rev_decoder(
+                memory=encoder_out,
+                tgt=rev_tgt,
+                tgt_mask=self._target_mask,
+                tgt_key_padding_mask=(rev_tokens == 0),
+            )
+            rev_out = self._vocab_out(rev_decoder_out)
+            if tokens is None:
+                return rev_out
+        
+        return forward_out, rev_out
 
     def features_to_memory(self, latent_img_features, dtype=None):
         if not dtype:
@@ -254,6 +254,8 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
 
         if tokens.shape[-1] ==  sdconsts.num_tokens:
             tokens = self.tokens_from_output(tokens)
+            
+        tokens = sdutils.change_rev(tokens, False).view(tokens.shape)
 
         texts = [clip_tokenizer.decode(toks.cpu().numpy()) for toks in tokens]
         for idx in range(len(texts)):
@@ -266,28 +268,58 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         return texts
 
     # TODO: custom mask
-    def get_next_probs(self, memory, curr_tokens, ascii_only=True, no_banned=True, custom_mask=None):
-        num_batch = curr_tokens.size(0)
-        size = curr_tokens.size(1)
-        if size == self._seq_len - 1:
-            probs = torch.zeros(len(clip_tokenizer.encoder), device=self._device)
-            probs[sdconsts.eot_token] = 1
-            return probs.repeat((curr_tokens.shape[0], 1))
+    def get_next_probs(self, memory, tokens=None, rev_tokens=None, ascii_only=True, no_banned=True, custom_mask=None):
+        if tokens is not None:
+            num_batch = tokens.size(0)
+            size = tokens.size(1)
+            if size == self._seq_len - 1:
+                probs = torch.zeros(len(clip_tokenizer.encoder), device=self._device)
+                probs[sdconsts.eot_token] = 1
+                return probs.repeat((tokens.shape[0], 1))
+            
+        if rev_tokens is not None:
+            num_batch = rev_tokens.size(0)
+            size = rev_tokens.size(1)
+            if size == self._seq_len - 1:
+                probs = torch.zeros(len(clip_tokenizer.encoder), device=self._device)
+                probs[sdconsts.sot_token] = 1
+                return probs.repeat((rev_tokens.shape[0], 1))
 
-        curr_embedded = self._clip_model.token_embedding(curr_tokens)
-        curr_embedded = curr_embedded + self._clip_model.positional_embedding[:size]
-        curr_embedded = curr_embedded
-        tgt_mask = nn.Transformer.generate_square_subsequent_mask(size).cuda()
-        memory = torch.cat(num_batch * [memory]).view(num_batch, 77, 768)
+        if tokens is not None:
+            curr_embedded = self._clip_model.token_embedding(tokens)
+            curr_embedded = curr_embedded + self._clip_model.positional_embedding[:size]
+            curr_embedded = curr_embedded
+            tgt_mask = nn.Transformer.generate_square_subsequent_mask(size).cuda()
+            memory = torch.cat(num_batch * [memory]).view(num_batch, 77, 768)
 
-        decoder_out = self._decoder(
-            tgt=curr_embedded,
-            memory=memory,
-            tgt_mask=tgt_mask,
-            tgt_key_padding_mask=(curr_tokens == 0),
-        )
+            decoder_out = self._decoder(
+                tgt=curr_embedded,
+                memory=memory,
+                tgt_mask=tgt_mask,
+                tgt_key_padding_mask=(tokens == 0),
+            )
 
-        vocab_out = self._vocab_out(decoder_out[:, -1])
+            vocab_out = self._vocab_out(decoder_out[:, -1])
+            
+        if rev_tokens is not None:
+            curr_embedded = self._clip_model.token_embedding(rev_tokens)
+            curr_embedded = curr_embedded + self._clip_model.positional_embedding[:size]
+            curr_embedded = curr_embedded
+            tgt_mask = nn.Transformer.generate_square_subsequent_mask(size).cuda()
+            memory = torch.cat(num_batch * [memory]).view(num_batch, 77, 768)
+
+            decoder_out = self._rev_decoder(
+                tgt=curr_embedded,
+                memory=memory,
+                tgt_mask=tgt_mask,
+                tgt_key_padding_mask=(rev_tokens == 0),
+            )
+
+            if tokens is not None:
+                vocab_out += self._vocab_out(decoder_out[:, -1])
+            else:
+                vocab_out = self._vocab_out(decoder_out[:, -1])
+            
 
         probs = torch.softmax(vocab_out, dim=-1)
         if custom_mask is not None:
@@ -297,6 +329,7 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
             
         probs[:, -1] = 0
         probs[:, -2] = 0
+        
 
         return probs
 

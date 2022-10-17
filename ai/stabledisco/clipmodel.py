@@ -1,12 +1,11 @@
 import typing
 
 import ai.stabledisco.constants as sdconsts
+import ai.stabledisco.utils as sdutils
 import clip
 import PIL
 import torch
 from ai.stabledisco.encodedtext import EncodedText
-from regex import X
-from sympy import nonlinsolve
 
 
 class ClipModel(torch.nn.Module):
@@ -59,6 +58,7 @@ class ClipModel(torch.nn.Module):
     def cosine_similarity(
         self, baseline_features, encoded_test_array, end_idx=-1, verbosity=1
     ):
+        
         with torch.no_grad():
             if isinstance(encoded_test_array[0], torch.Tensor):
                 if encoded_test_array[0].is_floating_point():
@@ -73,7 +73,8 @@ class ClipModel(torch.nn.Module):
                 )
             
             baseline_features = baseline_features
-            text_features = text_features
+            if len(text_features.shape) == 3:
+                text_features = text_features.squeeze(0)
             
             baseline_features /= baseline_features.norm(dim=-1, keepdim=True)
             text_features /= text_features.norm(dim=-1, keepdim=True)
@@ -184,18 +185,20 @@ class ClipModel(torch.nn.Module):
     def features_from_tokens(
         self, tokens, step_size=5000, verbosity=1, cuda=True, end_idx=-1
     ):
-        
         if type(tokens) is list:
             tokens = torch.stack(tuple(tokens))
+        tokens = sdutils.change_rev(tokens, False).view(tokens.shape)
+        
         def local_encode_func(tokens):
             if len(tokens.shape) == 1:
                 tokens = tokens.unsqueeze(0)
             elif len(tokens.shape) == 3 and tokens.size(0) == 1:
                 tokens = tokens.squeeze(0)
+                
             if end_idx == -1:
                 return self._model.encode_text(tokens)
-
-            return self._features_from_uniform_end_tokens(tokens, end_idx)
+            
+            return self._features_from_uniform_end_tokens(tokens, end_idx).view(tokens.size(0), -1)
         verbosity=0
         with torch.no_grad():
             if len(tokens) <= step_size:

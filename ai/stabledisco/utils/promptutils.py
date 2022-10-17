@@ -27,10 +27,13 @@ def random_prompt_combo(prompts, length=77, device=None):
     return prompt_tokens
 
 def find_end_idx(tokens):
-    end_idx_arg = torch.argwhere(tokens == sdconsts.eot_token).view(-1)
+    if isinstance(tokens, torch.Tensor) and len(tokens.shape) == 1:
+        tokens = tokens.unsqueeze(0)
+    end_token = sdconsts.sot_token if is_rev_tokens(tokens) else sdconsts.eot_token
+    end_idx_arg = torch.argwhere(tokens == end_token)[:,1]
     if end_idx_arg.size(0) == 0:
         return -1
-    return end_idx_arg[0]
+    return end_idx_arg
     
 def get_single_word_token(word):
     tokenized = clip.tokenize(word)[0]
@@ -38,11 +41,29 @@ def get_single_word_token(word):
         raise Exception(f"Input {word} consists of multiple tokens {tokenized}")
     return tokenized[1].item()
 
+def change_rev(text_tokens, ret_rev):
+    if isinstance(text_tokens, torch.Tensor) and len(text_tokens.shape) == 1:
+        text_tokens = text_tokens.unsqueeze(0)
+        
+    if is_rev_tokens(text_tokens) != ret_rev:
+        text_tokens = rev_tokens(text_tokens)
+        
+    return text_tokens
+
 def rev_tokens(text_tokens):
-    if len(text_tokens.shape) > 1:
-        text_tokens.view(1, text_tokens.size(0))
+    if isinstance(text_tokens, torch.Tensor) and len(text_tokens.shape) == 1:
+        text_tokens = text_tokens.unsqueeze(0)
+    
     flipped = torch.flip(text_tokens, dims=(1,))
-    end_idx_arg = torch.argwhere(flipped == sdconsts.eot_token)[:,1]
-    for idx in range(flipped.size(0)):
-        flipped[idx] = torch.cat((flipped[idx,end_idx_arg[idx]:], flipped[idx,:end_idx_arg[idx]]))
+    search_token = sdconsts.sot_token if is_rev_tokens(text_tokens) else sdconsts.eot_token
+    end_idx_arg = torch.argwhere(flipped == search_token)[:,1]
+    
+    for flipped_idx, token_idx in enumerate(end_idx_arg):
+        flipped[flipped_idx] = torch.cat((flipped[flipped_idx,token_idx:], flipped[flipped_idx,:token_idx]))
     return flipped
+
+def is_rev_tokens(text_tokens):
+    if isinstance(text_tokens, list):
+        return text_tokens[0][0] == sdconsts.eot_token
+    return text_tokens.view(-1)[0] == sdconsts.eot_token
+

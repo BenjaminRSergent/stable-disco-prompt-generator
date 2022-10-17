@@ -63,6 +63,7 @@ class CombinedClipRatingCalculator(MetricsCalculator):
         self._min_target_rating = min_target_rating
 
     def score_tokens(self, target_features, tokens, target_rating=None):
+        tokens = sdutils.change_rev(tokens, False).view(tokens.shape)
         token_features = self._clip_model.features_from_tokens(tokens, verbosity=0)
         # Reward a 0.055 increase in similarity the same as a 1.0 increase in rating at baseline.
         # That scale roughly maps to typical values and changes during evolution
