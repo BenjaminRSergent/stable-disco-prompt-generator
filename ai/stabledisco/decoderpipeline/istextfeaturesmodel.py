@@ -104,7 +104,7 @@ class IsTextFeaturesModel(torchmodules.BaseModel):
     def get_text_prob(self, features):
         return self(features).reshape(-1)
 
-    def improve_text_prob(self, features, target_prob=0.96, max_diff=0.03, per_step=1,  alpha=0.9, max_divs=30, verbose=False):
+    def improve_text_prob(self, features, target_prob=0.96, max_diff=0.03, per_step=1e-6,  alpha=0.8, max_divs=100, verbose=False):
         # TODO: Extract common code with improve rating
         with torch.no_grad():
             if len(features.shape) == 1:
@@ -120,7 +120,7 @@ class IsTextFeaturesModel(torchmodules.BaseModel):
             best_out_score = before_prob
 
             prev_prob = before_prob
-            con_worse = 0
+            con_better = 0
             num_divs = 0
             
             def get_adjusted_prob(other):
@@ -140,11 +140,6 @@ class IsTextFeaturesModel(torchmodules.BaseModel):
                 out_features = out_features / out_features.norm(dim=-1, keepdim=True)
 
                 mid_prob = self.get_text_prob(out_features)
-                if mid_prob < prev_prob:
-                    con_worse += 1
-                
-
-                prev_prob = mid_prob
                 
                 cosine_change = abs(1.0 - (features.unsqueeze(0) @ out_features.T))
 
@@ -155,10 +150,16 @@ class IsTextFeaturesModel(torchmodules.BaseModel):
                     best_out_features = out_features.clone()
                 
                 if cosine_change > max_diff:
+                    con_better = 0
                     out_features = prev_out_features
                     cosine_change = 0
                     per_step *= alpha
                     num_divs += 1
+                else: 
+                    con_better += 1
+                    if con_better > 4:
+                        per_step /= alpha
+                        
            
             if verbose:
                 cosine_change = abs(1.0 - (features.unsqueeze(0) @ best_out_features.T))

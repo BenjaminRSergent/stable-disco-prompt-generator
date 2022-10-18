@@ -268,7 +268,7 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         return texts
 
     # TODO: custom mask
-    def get_next_probs(self, memory, tokens=None, rev_tokens=None, ascii_only=True, no_banned=True, custom_mask=None):
+    def get_next_probs(self, memory, tokens=None, rev_tokens=None, forward_weight=0.5, ascii_only=True, no_banned=True, custom_mask=None):
         if tokens is not None:
             num_batch = tokens.size(0)
             size = tokens.size(1)
@@ -316,7 +316,7 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
             )
 
             if tokens is not None:
-                vocab_out += self._vocab_out(decoder_out[:, -1])
+                vocab_out = forward_weight * vocab_out + (1 - forward_weight) * self._vocab_out(decoder_out[:, -1])
             else:
                 vocab_out = self._vocab_out(decoder_out[:, -1])
             
@@ -361,7 +361,7 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         self._mask_dict[self.get_mask_key(ascii_only=True, no_banned=False)] = ascii_mask
         
         banned_mask = torch.ones(len(clip_tokenizer.encoder), device="cuda")
-        banned_words = ["jpg", "nude", "naked", "kid", "child", "lolita", "cum", "xxx", "anus", "ass", "butt"]
+        banned_words = ["cp", "jpg", "nude", "naked", "kid", "child", "lolita", "cum", "xxx", "anus", "ass", "butt"]
         for word in banned_words:
             banned_mask[clip_tokenizer.encoder[word + '</w>']] = 0
             

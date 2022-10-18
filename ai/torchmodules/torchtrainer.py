@@ -108,8 +108,8 @@ class TorchTrainer:
                     torchutils.dict_to_device(data, device)
                     loss = model.calc_loss(**data) / num_to_acc
                 else:
-                    for idx in range(len(data)):
-                        data[idx] = data[idx].to(device, non_blocking=True)
+                    for data_idx in range(len(data)):
+                        data[data_idx] = data[data_idx].to(device, non_blocking=True)
                     loss = model.calc_loss(*data) / num_to_acc
             # Scales the loss, and calls backward()
             # to create scaled gradients

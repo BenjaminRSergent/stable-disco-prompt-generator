@@ -43,7 +43,7 @@ class UpgradeConfig:
 class BeamSearchConfig:
     # Default values are based on a bayesian optimization parameter search
     def __init__(self, model_beams=40, clip_beams=40,
-                 num_inter_beams=3500, max_inter_beams=(sdconsts.num_tokens-2)//6, inter_beam_mul = 2,
+                 num_inter_beams=3500, max_inter_beams=10000, inter_beam_mul = 2,
                  rating_weight=1.0, clip_weight=2, 
                  enable_upgrades=True,
                  ascii_only=True, allow_banned=False, add_evolution_beams=False,
@@ -75,18 +75,18 @@ class BeamSearcher:
             self.features = features
             self.memory = memory
             torch_zero = torch.tensor([0.0], device=search_config.device)
+            
             if start_tokens is None:
                 torch_start = torch.tensor([sdconsts.sot_token], device=search_config.device, dtype=torch.long)
                 self.curr_beams = [(torch_zero, torch_start)]
                 self.iter_num = 0
             else:
-        
                 if isinstance(start_tokens, str):
                     # Don't include the end token
                     start_tokens = clip.tokenize(start_tokens)[0].cuda()
 
                 self.iter_num = sdutils.find_end_idx(start_tokens)-1
-                start_tokens = start_tokens.clone()
+                start_tokens = start_tokens.clone().long()
                 end_idx = sdutils.find_end_idx(start_tokens)
                 if end_idx != -1:
                     start_tokens = start_tokens[:end_idx]
@@ -150,7 +150,7 @@ class BeamSearcher:
         self._tokens_model = tokens_model
         self._ratings_model = ratings_model
         self._clip_model = clip_model
-        self._upgrader = decoderpipeline.PromptUpgrader(self._tokens_model, clip_model, self._ratings_model, rating_weight=0.0, verbose=False)
+        self._upgrader = decoderpipeline.PromptUpgrader(self._tokens_model, clip_model, self._ratings_model, rating_weight=0.0, verbose=True)
         if search_config is None:
             search_config = BeamSearchConfig()
         self._default_search_config = search_config
@@ -174,7 +174,7 @@ class BeamSearcher:
         self._tokens_model.train(False)
         self._ratings_model.train(False)
 
-        self._upgrader.set_verbose(False)
+        self._upgrader.set_verbose(verbose)
         if verbose:
             print(f"Starting beam search to find the top {topk} prompts of length {max_len}.")
 
@@ -187,13 +187,15 @@ class BeamSearcher:
 
                 tokens_to_find = min(max_len, self._tokens_model._seq_len - 1)
                 for _ in range(search_state.iter_num, tokens_to_find):
-                        
-                    self._do_beam_search_step(search_state, force_upgrade=(search_state.iter_num==tokens_to_find-1))
+                    force_upgrade = False #(search_state.iter_num==tokens_to_find-1)
+                    self._do_beam_search_step(search_state, force_upgrade=force_upgrade)
 
                     if (True or verbose) and search_state.iter_num % print_freq == 0:
                         self._print_search_state(search_state)
                         
                     search_state.iter_num += 1
+                    if search_state.times_upgraded > 1:
+                        break
                 
                 if verbose or True:
                     self._print_search_state(search_state)
@@ -264,7 +266,7 @@ class BeamSearcher:
             
         tokens_added = candidates[0].prev_tokens.size(0)+1
         
-        upgrades_allowed = search_state.config.enable_upgrades and tokens_added >= search_state.upgrade_config.upgrade_iter_start
+        upgrades_allowed = search_state.config.enable_upgrades and tokens_added >= search_state.upgrade_config.upgrade_iter_start and search_state.times_upgraded < 1
         if upgrades_allowed and search_state.iter_without_improvement == search_state.upgrade_config.end_upgrade_threshold:
             last_score = self._upgrader._calculator.score_tokens(search_state.features, top_beam)[0]
             beam_eot_idx = sdutils.find_end_idx(top_beam)
@@ -277,7 +279,7 @@ class BeamSearcher:
             upgraded_features = self._clip_model.features_from_tokens(top_beam.view(1, -1))
             cosine_sim = self._clip_model.cosine_similarity(search_state.features, upgraded_features)[0]
         
-        if upgrades_allowed and search_state.iter_without_improvement == search_state.upgrade_config.full_upgrade_threshold:
+        if upgrades_allowed and (force_upgrade or search_state.iter_without_improvement == search_state.upgrade_config.full_upgrade_threshold):
             # Upgrade the high clip score beam most different from the top. to increase the chance
             # of finding improvements
             last_score = self._upgrader._calculator.score_tokens(search_state.features, top_beam)[0]
@@ -287,12 +289,9 @@ class BeamSearcher:
             for orig_beam in to_upgrade:#, top_beam_idxs[0]]:
                 beam_eot_idx = sdutils.find_end_idx(orig_beam)
                 new_beam = orig_beam.clone()
-                new_beam, last_score = self._upgrade_end_tokens(search_state, new_beam, beam_eot_idx, last_score)
-                last_score = self._upgrader._calculator.score_tokens(search_state.features, new_beam)[0]
                 
-                new_beam, last_score = self._run_upgrade_loop(search_state, new_beam, candidates, last_score)
-                    
-                new_beam, last_score = self._upgrade_start_tokens(search_state, new_beam, last_score)
+                new_beam, last_score = self._upgrader.upgrade(search_state.features, new_beam.clone(), max_tokens=0, candidate_cnt=search_state.upgrade_config.baseline_cands, max_iters=2)
+                
                 search_state.last_start_upgrade = beam_eot_idx
 
                 upgraded_features = self._clip_model.features_from_tokens(new_beam.view(1, -1))
@@ -315,19 +314,19 @@ class BeamSearcher:
             search_state.times_upgraded += 1
             
             
-        no_improve_mul = np.sqrt(1.25)
+        no_improve_add = 1024
         if cosine_sim > search_state.best_match_cosine:
-            search_state.curr_inter_beams = max(int(search_state.curr_inter_beams/(no_improve_mul)), search_state.config.num_inter_beams)
+            search_state.curr_inter_beams = max(int(search_state.curr_inter_beams-no_improve_add//4), 768)
             search_state.iter_without_improvement = 0
             search_state.best_match_cosine = cosine_sim
             search_state.final_beam_tokens.append(top_beam)
         else:
-            search_state.curr_inter_beams = min(int(search_state.curr_inter_beams*no_improve_mul**2), search_state.config.max_inter_beams)
+            search_state.curr_inter_beams = min(int(search_state.curr_inter_beams+no_improve_add), search_state.config.max_inter_beams)
             
-        #print(search_state.curr_inter_beams)
+        print(search_state.curr_inter_beams)
         
     def _upgrade_end_tokens(self, search_state, new_beam, beam_eot_idx, last_score,
-                            final_token_cands = sdconsts.num_tokens//4, penult_token_cands=sdconsts.num_tokens//4):
+                            final_token_cands = sdconsts.num_tokens//5, penult_token_cands=sdconsts.num_tokens//5):
         if search_state.config.verbose:
             print("Upgrading last token")
         prev_loop_score = -float('inf')
@@ -360,114 +359,34 @@ class BeamSearcher:
     def _upgrade_start_tokens(self, search_state, new_beam, last_score):
         print(f"Large upgrade pass on first tokens, this pass will take more time than most.")
         # Always check the first few. They have the largest impact
-        
+        orig_score = last_score
         
         new_beam, new_score = self._upgrader.single_upgrade_pass(search_state.features, new_beam, start_idx=7, end_idx=10,
                                                                     num_candidates=sdconsts.num_tokens//4,
                                                                     decay_factor=1.0)
         
         if search_state.config.verbose:
-            print(f"Start token pass at {sdconsts.num_tokens//4} from 7 to 10 increased score from {last_score:0.3f} to {new_score:0.3f}")
+            print(f"Start token pass at {sdconsts.num_tokens//2} from 7 to 10 increased score from {last_score:0.3f} to {new_score:0.3f}")
         last_score = new_score
         
         new_beam, new_score = self._upgrader.single_upgrade_pass(search_state.features, new_beam, start_idx=4, end_idx=7,
-                                                                    num_candidates=sdconsts.num_tokens//3,
+                                                                    num_candidates=sdconsts.num_tokens//5,
                                                                     decay_factor=1.0)
         
         if search_state.config.verbose:
-            print(f"Start token pass at {sdconsts.num_tokens//3} from 4 to 7 increased score from {last_score:0.3f} to {new_score:0.3f}")
+            print(f"Start token pass at {sdconsts.num_tokens//2} from 4 to 7 increased score from {last_score:0.3f} to {new_score:0.3f}")
         last_score = new_score
         
         
         new_beam, new_score = self._upgrader.single_upgrade_pass(search_state.features, new_beam, start_idx=1, end_idx=4,
-                                                                    num_candidates=sdconsts.num_tokens//2,
+                                                                    num_candidates=sdconsts.num_tokens//6,
                                                                     decay_factor=1.0)
         
         if search_state.config.verbose:
             print(f"Start token pass at {sdconsts.num_tokens//2} from 1 to 4 increased score from {last_score:0.3f} to {new_score:0.3f}")
         last_score = new_score
         
-        print(f"Start token pass at increased score from {last_score:0.3f} to {new_score:0.3f}")
-        return new_beam, new_score
-    
-    def _run_upgrade_loop(self, search_state, new_beam, candidates, last_score):
-        upgrade_config = search_state.upgrade_config
-
-        tokens_added = candidates[0].prev_tokens.size(0)+1
-        tokens_since_start = tokens_added - upgrade_config.upgrade_iter_start
-        num_passes = upgrade_config.num_passes
-        
-        if tokens_added < 20 or search_state.times_upgraded % 5 == 0:
-            start_idx = 1
-        else:
-            # Tokens toward the middle are most likely to change. The start tends to be stable and we do an end token pass before this
-            start_idx = tokens_added//3
-            
-
-        max_wraps = int(1.5*tokens_added//upgrade_config.token_step_size+1)
-        
-        if start_idx < upgrade_config.token_step_size:
-            # Avoid skipping beginning tokens after wrapping around
-            start_idx = 1
-    
-        start_idx = max(1, start_idx)
-        end_idx = start_idx + upgrade_config.token_step_size
-        start_to_end = (73 - upgrade_config.upgrade_iter_start)
-
-        # Linearly decrease candidates to 1024
-        num_candidates = max(int(upgrade_config.baseline_cands * (1 - tokens_since_start/start_to_end)), upgrade_config.min_cands)
-        cand_exp_base = 1.5
-        cand_mul_base = 2
-        cands_mul = int(cand_mul_base*cand_exp_base**(search_state.iter_without_improvement-search_state.upgrade_config.full_upgrade_threshold))
-        cands_mul = max(cands_mul, 3)
-        min_cands = num_candidates
-        max_cands = min(min_cands * cands_mul, sdconsts.num_tokens//4)
-        first_pass = max_cands
-        
-        con_improve = 0
-        con_improve_to_div = 2
-        times_wrapped = 0
-        num_candidates = first_pass 
-        min_improve = 5e-3
-        for pass_num in range(num_passes):
-            if pass_num % 10 == 0:
-                print(f"Running up to {num_passes} upgrade passes on {tokens_added-2} tokens at {num_candidates} from {start_idx} to {end_idx} on beam with the highest similarity. on beam \"{self._tokens_model.decode(new_beam)[0]}\"")
-            new_beam, new_score = self._upgrader.single_upgrade_pass(search_state.features, new_beam.clone(), start_idx=start_idx, end_idx=end_idx,
-                                                                    num_candidates=int(num_candidates),
-                                                                    decay_factor=0.5)
-            
-            if (new_score - last_score) < min_improve:
-                con_improve = 0
-                if num_candidates < max_cands:
-                    num_candidates *= cands_mul
-                else:
-                    if times_wrapped >= max_wraps:
-                        break
-                    else:
-                        times_wrapped += 1
-                        num_candidates = first_pass 
-                        start_idx += upgrade_config.token_step_size
-                        end_idx += upgrade_config.token_step_size
-                        if start_idx >= tokens_added:
-                            start_idx -= tokens_added
-                            end_idx -= tokens_added
-                                
-            elif num_candidates > max_cands:
-                num_candidates = min_cands
-            elif num_candidates > min_cands:
-                con_improve += 1
-                if con_improve >= con_improve_to_div:
-                    con_improve = 0
-                    num_candidates = max(min_cands, num_candidates//cands_mul)
-                
-            """
-            if search_state.config.verbose:
-                if last_score - new_score < self._epsilon:
-                    print(f"Pass {pass_num}  at {num_candidates} from {start_idx} to {end_idx} of {tokens_added} increased score from {last_score:0.3f} to {new_score:0.3f}")
-                else:
-                    print(f"Pass {pass_num}  at {num_candidates} from {start_idx} to {end_idx} of {tokens_added} did not increase score")
-                last_score = new_score
-            """
+        print(f"Start token pass at increased score from {orig_score:0.3f} to {new_score:0.3f}")
         return new_beam, new_score
 
     def _get_candidate_beams(self, search_state):
@@ -564,7 +483,7 @@ class BeamSearcher:
     def _print_search_state(self, search_state):
         if not search_state.final_beam_tokens:
             return
-        print(f"{search_state.iter_num} of {self._tokens_model._seq_len-2} tokens searched")
+        print(f"{search_state.iter_num.item()} of {self._tokens_model._seq_len-2} tokens searched")
         best_features = self._clip_model.features_from_tokens(search_state.final_beam_tokens[-1].view(1, -1))
         rating = self._ratings_model(best_features)[0].item()
         

@@ -4,7 +4,6 @@ import clip
 import numpy as np
 import PIL
 import torch
-from ai.stabledisco.clipmodel import ClipModel
 from ai.stabledisco.stablediscomodel import StableDiscoModel
 from ldm.util import instantiate_from_config
 from omegaconf import OmegaConf
@@ -57,6 +56,7 @@ def load_sd_model(sd_config, ckpt, sd_dir=None):
 
 
 def load_clip_model(model_name="ViT-L/14"):
+    from ai.stabledisco.clipmodel import ClipModel
     ViTL14_model, preprocess = clip.load(model_name)
     return ClipModel(ViTL14_model, preprocess, model_name)
 

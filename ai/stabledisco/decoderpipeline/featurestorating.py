@@ -108,7 +108,7 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
 
             return top_words, top_ratings
 
-    def improve_rating(self, features, target_rating=9.0, max_diff=0.05, per_step=0.1,  alpha=0.9, patience=5, max_divs=80, verbose=False):
+    def improve_rating(self, features, target_rating=9.0, max_diff=0.05, per_step=1e-8,  alpha=0.9, max_divs=100, verbose=False):
         with torch.no_grad():
             if len(features.shape) == 1:
                 features = features.view(1, -1)
@@ -126,34 +126,37 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
             def get_adjusted_rating(other):
                 return self.get_rating(other) + sdutils.cosine_sim(features,other)
 
-            prev_rating = before_rating
-            con_worse = 0
+            con_better = 0
             num_divs = 0
-            while self.get_rating(out_features)[0] <= target_rating and cosine_change < max_diff and num_divs < max_divs:
+            while self.get_rating(out_features)[0] < target_rating and cosine_change < max_diff and num_divs < max_divs:
                 dx = torch.autograd.functional.jacobian(get_adjusted_rating, out_features.float(), create_graph=True).reshape(out_features.shape)
 
                 dx_norm = dx / dx.norm(dim=-1, keepdim=True)
-
+                
+                prev_out_features = out_features.clone()
                 out_features += per_step * dx_norm
                 out_features = out_features / out_features.norm(dim=-1, keepdim=True)
 
                 mid_rating = self.get_rating(out_features)
-                if mid_rating < prev_rating:
-                    con_worse += 1
-                
-
-                if con_worse > patience:
-                    per_step *= alpha
-                    num_divs += 1
-                    con_worse = 0
-                prev_rating = mid_rating
-
                 
                 cosine_change = abs(1.0 - (features.unsqueeze(0) @ out_features.T))
-                
+
                 if mid_rating > best_out_score and cosine_change < max_diff:
+                    if mid_rating - best_out_score < 1e-5:
+                        per_step /= alpha
                     best_out_score = mid_rating
                     best_out_features = out_features.clone()
+                
+                if cosine_change > max_diff:
+                    out_features = prev_out_features
+                    cosine_change = 0
+                    per_step *= alpha
+                    num_divs += 1
+                    con_better = 0
+                else: 
+                    con_better += 1
+                    if con_better > 3:
+                        per_step /= alpha
 
             if verbose:
                 cosine_change = abs(1.0 - (features.unsqueeze(0) @ best_out_features.T))

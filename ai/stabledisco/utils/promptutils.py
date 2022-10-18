@@ -60,7 +60,7 @@ def rev_tokens(text_tokens):
     
     for flipped_idx, token_idx in enumerate(end_idx_arg):
         flipped[flipped_idx] = torch.cat((flipped[flipped_idx,token_idx:], flipped[flipped_idx,:token_idx]))
-    return flipped
+    return flipped.long()
 
 def is_rev_tokens(text_tokens):
     if isinstance(text_tokens, list):

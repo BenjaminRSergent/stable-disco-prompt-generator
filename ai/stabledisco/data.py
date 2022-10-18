@@ -356,8 +356,8 @@ class AlteredFeaturesSet(Dataset):
                 scaled_features = features
                 sim = torch.ones(1)
             else:
-                cycle_idx = idx % self._num_steps
-                scale_div = 1.5+2*(cycle_idx+1)/self._num_steps
+                cycle_idx = idx % 10
+                scale_div = 1.5+3*(cycle_idx+1)/10
                 scaled_features = features + self._make_rand_shift(scale_div)
                 scaled_features = scaled_features / scaled_features.norm(dim=-1, keepdim=True)
                 sim = sdutils.cosine_sim(features, scaled_features)
