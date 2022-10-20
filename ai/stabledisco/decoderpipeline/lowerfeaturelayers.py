@@ -6,6 +6,7 @@ import torch.nn as nn
 
 
 class LowerFeatureLayers(torchmodules.BaseModel):
+    pruned_out_size = 5202
     def __init__(self, transformer_width=768, dropout=0.05, device=None):
         super().__init__("FeatureLayers")
 

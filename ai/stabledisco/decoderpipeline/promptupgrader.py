@@ -93,6 +93,7 @@ class PromptUpgrader:
         curr_best_score = self._calculator.score_tokens(target_features, tokens)[0].item()
         return PromptUpgrader.PromptState(self, target_features, memory, tokens, curr_best_score)
 
+    # TODO: Token insertions
     def upgrade(self, target_features, prompt, candidate_cnt=4096, add_stride=10, max_tokens=sdconsts.prompt_token_len, orig_start_idx=1, orig_end_idx=sdconsts.prompt_token_len, max_iters=5, state=None):
         # TODO: Mask place holders when ranking tokens
         with torch.no_grad():
@@ -100,8 +101,6 @@ class PromptUpgrader:
                 state = self._create_state(target_features, prompt)
             tokens = state.best_tokens
             self._print_result(state.target_features, tokens, state.curr_best_score, result_prefix="Initial prompt")
-            if self._verbose:
-                print("Running initial refinement")
 
             cand_mul = 1.5
             min_cands = int(candidate_cnt / cand_mul)
@@ -112,18 +111,31 @@ class PromptUpgrader:
             new_best = state.curr_best_score
             end_idx = state.get_end_idx()   
             
+            if self._verbose:
+                print(f"Upgrading start and end tokens with a large candidate count")
+            
+            
+            _, new_best = self.single_upgrade_pass(state.target_features, state.best_tokens, 10000, state=state, start_idx=1, end_idx=5, rev_ret=False, forward_weight=0, decay_factor=1.0)
+            print("Finished start pass")
+            _, new_best = self.single_upgrade_pass(state.target_features, state.best_tokens, min_cands, state=state, start_idx=1, rev_ret=False, forward_weight=0, decay_factor=1.0)
+            
+            
+            _, new_best = self.single_upgrade_pass(state.target_features, state.best_tokens, 10000, state=state, start_idx=end_idx-5, end_idx=end_idx, rev_ret=False, forward_weight=1, decay_factor=1.0)
+            print("Finished end pass")
+            
+            _, new_best = self.single_upgrade_pass(state.target_features, state.best_tokens, min_cands, state=state, start_idx=1, rev_ret=False, forward_weight=1, decay_factor=1.0)
+            
+            
+            if self._verbose:
+                print("Running initial refinement")
             for _ in range(max_iters):
                 old_best = new_best
+                # TODO: forward or backward heavy
                 _, new_best = self.single_upgrade_pass(state.target_features, state.best_tokens, min_cands, state=state, start_idx=1, rev_ret=False)
                 if not _is_improvement_eps(new_best, old_best):
                     break
             
             
-            if self._verbose:
-                print(f"Upgrading start and end tokens with a large candidate count")
-            _, new_best = self.single_upgrade_pass(state.target_features, state.best_tokens, 10000, state=state, start_idx=1, end_idx=5, rev_ret=False)
-            _, new_best = self.single_upgrade_pass(state.target_features, state.best_tokens, 10000, state=state, start_idx=end_idx-5, end_idx=end_idx, rev_ret=False)
-                     
             self.add_tokens(state.target_features, state.best_tokens, pass_cands=min_cands, max_tokens=max_tokens, add_stride=add_stride, state=state, rev_ret=False)
             state.remove_tmp_state()
             
@@ -136,12 +148,14 @@ class PromptUpgrader:
             if self._verbose:
                 print(f"Finishing upgrade with a large pass followed by another refinement loop")
             self.single_upgrade_pass(state.target_features, state.best_tokens, num_candidates=max_cands, state=state, start_idx=orig_start_idx, rev_ret=False)
-
+            
             if self._verbose:
                 print(f"Upgrading start and end tokens with a large candidate count")
-            _, new_best = self.single_upgrade_pass(state.target_features, state.best_tokens, 10000, state=state, start_idx=1, end_idx=5, rev_ret=False)
+                  
             _, new_best = self.single_upgrade_pass(state.target_features, state.best_tokens, 10000, state=state, start_idx=end_idx-5, end_idx=end_idx, rev_ret=False)
-             
+            print("Finished end pass")
+            
+            
             for _ in range(max_iters):
                 old_best = new_best
                 _, new_best = self.single_upgrade_pass(state.target_features, state.best_tokens, min_cands, state=state, start_idx=1, rev_ret=False)
@@ -150,7 +164,7 @@ class PromptUpgrader:
 
             return state.get_best(True)
 
-    def single_upgrade_pass(self, target_features, prompt, num_candidates, decay_factor=0.9, state=None, start_idx=1, end_idx=-1, rev_ret=True):
+    def single_upgrade_pass(self, target_features, prompt, num_candidates, decay_factor=0.95, state=None, start_idx=1, end_idx=-1, rev_ret=True, forward_weight=None):
         num_candidates = min(num_candidates, sdconsts.num_tokens-2)
         start_idx = max(1, start_idx)
 
@@ -165,7 +179,7 @@ class PromptUpgrader:
                 state.update_tokens_if_better(new_tokens, new_best)
 
                 new_tokens, new_best = self._run_upgrade_cycle(target_features, tokens, state.tmp_best_score, num_candidates, state.memory,
-                                                            decay_factor=decay_factor, start_idx=start_idx, end_idx=end_idx)
+                                                            decay_factor=decay_factor, start_idx=start_idx, end_idx=end_idx, forward_weight=forward_weight)
 
                 state.update_tokens_if_better(new_tokens, new_best)
                 
@@ -213,7 +227,7 @@ class PromptUpgrader:
             return state.get_best(rev_ret=rev_ret)
         
     def add_tokens(self, target_features, prompt, pass_cands=1024, add_stride=10, max_tokens=sdconsts.prompt_token_len,
-                   new_token_candidates=5000, refine_mul = 4/5, final_mul=3/5, state=None, rev_ret=True):
+                   new_token_candidates=3000, refine_mul = 5/3, final_mul=1, state=None, rev_ret=True):
         if not state:
             state = self._create_state(target_features, prompt)
         prompt_end = state.get_end_idx()
@@ -310,7 +324,7 @@ class PromptUpgrader:
         return tokens, curr_best_score
 
 
-    def _run_upgrade_cycle(self, target_features, tokens, curr_best_score, num_cands, memory, decay_factor=0.8, print_freq=0, start_idx=1, end_idx=-1):
+    def _run_upgrade_cycle(self, target_features, tokens, curr_best_score, num_cands, memory, decay_factor=1.0, print_freq=0, start_idx=1, end_idx=-1, forward_weight=None):
         start_idx = max(1, start_idx)
         # TODO: Wrap end idx
         last_idx = sdutils.find_end_idx(tokens)
@@ -321,10 +335,13 @@ class PromptUpgrader:
             to_upgrade = list(range(start_idx, last_idx)) + list(range(1, max(start_idx - last_idx, 2)))
         else:
             to_upgrade = list(range(start_idx, end_idx))
-
         to_upgrade = [last_idx - idx for idx in to_upgrade]
+
+        if forward_weight is not None and forward_weight > 0.5:
+            to_upgrade = to_upgrade[::-1]
         ends = []
         for curr_end in to_upgrade:
+            
             if tokens[curr_end] in {sdconsts.sot_token, sdconsts.eot_token}: 
                 continue
         
@@ -332,8 +349,12 @@ class PromptUpgrader:
                 print(f"Finished {curr_end} tokens with {num_cands} candidates per token")
                 self._print_result(target_features, tokens, curr_best_score, True)
 
-            forward_weight = curr_end/last_idx
-            replacement_probs = self._tokens_model.get_next_probs(memory, forward_weight=forward_weight, tokens=sdutils.rev_tokens(tokens)[0,:curr_end].unsqueeze(0), rev_tokens=tokens[:curr_end].unsqueeze(0), ascii_only=self._ascii_only, no_banned=self._no_banned)[0]
+            if forward_weight is None:
+                curr_forward_weight = curr_end/last_idx
+            else:
+                curr_forward_weight = forward_weight
+                
+            replacement_probs = self._tokens_model.get_next_probs(memory, forward_weight=curr_forward_weight, tokens=sdutils.rev_tokens(tokens)[0,:curr_end].unsqueeze(0), rev_tokens=tokens[:curr_end].unsqueeze(0), ascii_only=self._ascii_only, no_banned=self._no_banned)[0]
             _, candidate_tokens = replacement_probs.topk(num_cands, dim=-1)
 
             to_test = [tokens.clone()]

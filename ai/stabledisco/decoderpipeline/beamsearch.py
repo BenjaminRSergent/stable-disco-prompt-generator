@@ -43,7 +43,7 @@ class UpgradeConfig:
 class BeamSearchConfig:
     # Default values are based on a bayesian optimization parameter search
     def __init__(self, model_beams=40, clip_beams=40,
-                 num_inter_beams=3500, max_inter_beams=10000, inter_beam_mul = 2,
+                 num_inter_beams=3500, max_inter_beams=5000, inter_beam_mul = 2,
                  rating_weight=1.0, clip_weight=2, 
                  enable_upgrades=True,
                  ascii_only=True, allow_banned=False, add_evolution_beams=False,
@@ -314,9 +314,9 @@ class BeamSearcher:
             search_state.times_upgraded += 1
             
             
-        no_improve_add = 1024
+        no_improve_add = 768
         if cosine_sim > search_state.best_match_cosine:
-            search_state.curr_inter_beams = max(int(search_state.curr_inter_beams-no_improve_add//4), 768)
+            search_state.curr_inter_beams = max(int(search_state.curr_inter_beams-no_improve_add//3), 768)
             search_state.iter_without_improvement = 0
             search_state.best_match_cosine = cosine_sim
             search_state.final_beam_tokens.append(top_beam)

@@ -166,8 +166,11 @@ class ClipModel(torch.nn.Module):
         )
 
     def get_features(self, encoded, verbosity=1):
-        if type(encoded) is not list and type(encoded) is not torch.Tensor:
+        if type(encoded) is str:
+            encoded = clip.tokenize(encoded, truncate=True).cuda()
+        elif type(encoded) is not list and type(encoded) is not torch.Tensor:
             encoded = [encoded]
+            
         if type(encoded[0]) == torch.Tensor:
             return self.features_from_tokens(encoded, verbosity=verbosity)
         return self.features_from_encoded(encoded, verbosity=verbosity)

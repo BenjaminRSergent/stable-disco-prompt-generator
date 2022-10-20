@@ -1,4 +1,5 @@
 import ai.stabledisco.constants as sdconsts
+import ai.torchmodules.utils as torchutils
 import torch
 
 
@@ -32,7 +33,7 @@ def norm_t(x, dim=-1, keepdim=True):
 def cosine_sim(x, y):
     return x @ y.T
 
-def calc_singular_vecs(features, cutoff=0.9, largest=True, weights=None):
+def calc_singular_vecs(features, cutoff=0.9, largest=True, weights=None, normalize=True):
     features /= features.norm(dim=-1, keepdim=True)
     svd = torch.linalg.svd(features.float())
     if largest:
@@ -55,13 +56,17 @@ def calc_singular_vecs(features, cutoff=0.9, largest=True, weights=None):
             ret += weight*svd.S[idx]*svd.Vh[idx]
         else:
             break
+    if normalize:
+        ret = norm_t(ret)
         
-    return norm_t(ret)
+    return ret
 
 def remove_projection(to_project, axis):
-    return to_project - project_to_axis(to_project, axis)
+    return (to_project - project_to_axis(to_project, axis))
     
 def project_to_axis(to_project, axis):
+    to_project = to_project
+    axis = flatten(axis)
     mag = torch.dot(to_project, axis)/axis.norm(dim=-1, keepdim=True)
     return mag * axis
 
@@ -71,7 +76,17 @@ def make_random_feature_shifts(cnt=1, mean=0.025, std=0.25, min_scale=0.05, devi
     return scale, (scale * shift).view(-1)
 
 def make_random_features(cnt=1, device=None, dtype=torch.float):
+    if device is None:
+        device = torchutils.get_default_device()
     return norm_t(torch.randn((cnt, sdconsts.feature_width), device=device, dtype=dtype))
 
 def random_scalar_norm(cnt=1, mean=0.025, std=0.25, min_scale=0.05, device=None, dtype=torch.float):
     return torch.abs(torch.randn((cnt, 1),  device=device, dtype=dtype) * std + mean) + min_scale
+
+def flatten(tens):
+    return tens.view(-1)
+
+def unflatten(tens):
+    if len(tens.shape) == 1:
+        tens = tens.view(1, -1)
+    return tens
