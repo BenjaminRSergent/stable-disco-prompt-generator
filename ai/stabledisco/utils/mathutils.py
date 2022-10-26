@@ -31,7 +31,7 @@ def norm_t(x, dim=-1, keepdim=True):
     return x / x.norm(dim=dim, keepdim=keepdim)
 
 def cosine_sim(x, y):
-    return x @ y.T
+    return unflatten(x) @ unflatten(y).T
 
 def calc_singular_vecs(features, cutoff=0.9, largest=True, weights=None, normalize=True):
     features /= features.norm(dim=-1, keepdim=True)
@@ -76,6 +76,12 @@ def make_random_feature_shifts(cnt=1, mean=0.025, std=0.25, min_scale=0.05, devi
     return scale, (scale * shift).view(-1)
 
 def make_random_features(cnt=1, device=None, dtype=torch.float):
+    if device is None:
+        device = torchutils.get_default_device()
+    return norm_t(2*(torch.rand((cnt, sdconsts.feature_width), device=device, dtype=dtype) - 0.5))
+
+
+def make_random_features_norm(cnt=1, device=None, dtype=torch.float):
     if device is None:
         device = torchutils.get_default_device()
     return norm_t(torch.randn((cnt, sdconsts.feature_width), device=device, dtype=dtype))

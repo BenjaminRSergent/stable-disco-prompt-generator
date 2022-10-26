@@ -165,28 +165,28 @@ class ClipModel(torch.nn.Module):
             encoded_text, step_size=step_size, verbosity=verbosity, cuda=cuda
         )
 
-    def get_features(self, encoded, verbosity=1):
+    def get_features(self, encoded, verbosity=1, normalize=True):
         if type(encoded) is str:
             encoded = clip.tokenize(encoded, truncate=True).cuda()
         elif type(encoded) is not list and type(encoded) is not torch.Tensor:
             encoded = [encoded]
             
         if type(encoded[0]) == torch.Tensor:
-            return self.features_from_tokens(encoded, verbosity=verbosity)
-        return self.features_from_encoded(encoded, verbosity=verbosity)
+            return self.features_from_tokens(encoded, normalize=normalize, verbosity=verbosity)
+        return self.features_from_encoded(encoded, normalize=normalize, verbosity=verbosity)
 
     def features_from_encoded(
-        self, encoded_text, step_size=10000, verbosity=1, cuda=True
+        self, encoded_text, step_size=10000, verbosity=1, normalize=True, cuda=True
     ):
         if type(encoded_text) is not list:
             encoded_text = [encoded_text]
         tokens = torch.stack([encoded.get_tokens() for encoded in encoded_text])
         return self.features_from_tokens(
-            tokens, step_size=step_size, verbosity=verbosity, cuda=cuda
+            tokens, step_size=step_size, normalize=normalize, verbosity=verbosity, cuda=cuda
         )
 
     def features_from_tokens(
-        self, tokens, step_size=5000, verbosity=1, cuda=True, end_idx=-1
+        self, tokens, step_size=5000, verbosity=1, normalize=True, cuda=True, end_idx=-1
     ):
         if type(tokens) is list:
             tokens = torch.stack(tuple(tokens))
@@ -199,7 +199,10 @@ class ClipModel(torch.nn.Module):
                 tokens = tokens.squeeze(0)
                 
             if end_idx == -1:
-                return self._model.encode_text(tokens)
+                features = self._model.encode_text(tokens)
+                if normalize:
+                    features = sdutils.norm_t(features)
+                return features
             
             return self._features_from_uniform_end_tokens(tokens, end_idx).view(tokens.size(0), -1)
         verbosity=0
@@ -230,10 +233,13 @@ class ClipModel(torch.nn.Module):
                 torch.add(start, step, out=start)
             if verbosity > 0:
                 print(f"Finished {len(tokens)} of {len(tokens)} entries")
-            text_features /= text_features.norm(dim=-1, keepdim=True)
+                
+            if normalize:
+                text_features /= text_features.norm(dim=-1, keepdim=True)
 
         if not cuda:
             text_features = text_features.cpu()
+            
 
         return text_features
 

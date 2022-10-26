@@ -1,6 +1,6 @@
 from ai.stabledisco.utils.imageutils import (get_size_fixed_larger_dim,
                                              load_img, resize_img,
-                                             scale_size_fixed_larger_dim)
+                                             scale_size_fixed_larger_dim, make_tiles)
 from ai.stabledisco.utils.mathutils import (calc_singular_vecs, cosine_sim,
                                             diff_t, ease_in_lin, ease_in_quat,
                                             ease_out_lin, ease_out_quat,
@@ -9,7 +9,8 @@ from ai.stabledisco.utils.mathutils import (calc_singular_vecs, cosine_sim,
                                             norm_t, normed_sine,
                                             project_to_axis,
                                             random_scalar_norm,
-                                            remove_projection)
+                                            remove_projection,
+                                            make_random_features_norm)
 from ai.stabledisco.utils.modelutils import (load_clip_model,
                                              load_default_sd_model,
                                              load_sd_model_from_config)

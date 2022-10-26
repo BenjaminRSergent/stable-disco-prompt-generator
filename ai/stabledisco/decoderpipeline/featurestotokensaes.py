@@ -349,8 +349,8 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         num_ascii = 0
         for token in clip_tokenizer.decoder.keys():
             text = clip_tokenizer.decode([token])
-            #is_ascii = norm_char_regex.match(text) and text[-1] == ' '
-            is_ascii = ' ' in text[-1] and (norm_char_regex.match(text) is not None)
+            is_ascii = norm_char_regex.match(text) and ' ' in text[-1]
+            #is_ascii =  (norm_char_regex.match(text) is not None) and ' ' in text[-1]
 
             if is_ascii:
                 num_ascii += 1
@@ -361,7 +361,8 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         self._mask_dict[self.get_mask_key(ascii_only=True, no_banned=False)] = ascii_mask
         
         banned_mask = torch.ones(len(clip_tokenizer.encoder), device="cuda")
-        banned_words = ["cyberpunk","steampunk", "cp", "jpg", "nude", "naked", "kid", "kids", "child", "lolita", "cum", "xxx", "anus", "ass", "butt"]
+        banned_words = ["erotic", "furry","cyberpunk","steampunk", "cp", "jpg", "nude", "naked", "kid", "kids", "child", "lolita", "cum", "xxx", "anus", "ass", "butt",
+                        "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]
         for word in banned_words:
             banned_mask[clip_tokenizer.encoder[word + '</w>']] = 0
             

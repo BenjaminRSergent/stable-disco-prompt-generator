@@ -104,7 +104,7 @@ class IsTextFeaturesModel(torchmodules.BaseModel):
     def get_text_prob(self, features):
         return self(features).reshape(-1)
 
-    def improve_text_prob(self, features, target_prob=0.96, max_diff=0.03, per_step=1e-6,  alpha=0.8, max_divs=100, verbose=False):
+    def improve_text_prob(self, features, target_prob=0.96, max_diff=0.03, per_step=1e-6,  alpha=0.7, max_divs=200, verbose=False):
         # TODO: Extract common code with improve rating
         with torch.no_grad():
             if len(features.shape) == 1:
@@ -124,7 +124,7 @@ class IsTextFeaturesModel(torchmodules.BaseModel):
             num_divs = 0
             
             def get_adjusted_prob(other):
-                return self.get_text_prob(other) + 3*sdutils.cosine_sim(features,other)/4
+                return self.get_text_prob(other) + 1.25*sdutils.cosine_sim(features,other)
             
             eps_scalar = torch.tensor([1e-33], device=features.device)
             while self.get_text_prob(out_features)[0] <= target_prob and cosine_change < max_diff and num_divs < max_divs:
@@ -157,7 +157,7 @@ class IsTextFeaturesModel(torchmodules.BaseModel):
                     num_divs += 1
                 else: 
                     con_better += 1
-                    if con_better > 4:
+                    if con_better > 10:
                         per_step /= alpha
                         
            
