@@ -124,7 +124,7 @@ class IsTextFeaturesModel(torchmodules.BaseModel):
             num_divs = 0
             
             def get_adjusted_prob(other):
-                return self.get_text_prob(other) + 1.25*sdutils.cosine_sim(features,other)
+                return self.get_text_prob(other) + 1.5*sdutils.cosine_sim(features,other)
             
             eps_scalar = torch.tensor([1e-33], device=features.device)
             while self.get_text_prob(out_features)[0] <= target_prob and cosine_change < max_diff and num_divs < max_divs:

@@ -1,10 +1,17 @@
 import random
 
+from torch.functional import namedtuple
+
 import ai.stabledisco.constants as sdconsts
+import ai.stabledisco.utils.mathutils as mathutils
 import ai.torchmodules.utils as torchutils
 import clip
 import torch
 
+from clip.clip import _tokenizer as clip_tokenizer
+
+WordImpact = namedtuple("WordImpact", "impact word prompt")
+TokenImpact = namedtuple("TokenImpact", "impact idx")
 
 def random_prompt_combo(prompts, length=77, device=None):
     tokens_set = set(sum([clip.tokenize(prompt, truncate=True)[0].tolist() for prompt in prompts], []))
@@ -67,3 +74,92 @@ def is_rev_tokens(text_tokens):
         return text_tokens[0][0] == sdconsts.eot_token
     return text_tokens.view(-1)[0] == sdconsts.eot_token
 
+def rank_word_impact(prompt, clip_model, idxs=None, orig_features=None, normalize=True):
+    
+    full_features = clip_model.get_features(prompt)[0]
+    if orig_features is None:
+        orig_features = full_features
+    split_prompt = prompt.split()
+    
+    end_idx = len(split_prompt)-1
+    if idxs is None:
+        idxs = range(1, end_idx)
+    
+    orig_diff = 1 - mathutils.cosine_sim( mathutils.norm_t(orig_features),  mathutils.norm_t(full_features)).item()
+    impact_tuples = []
+    total_impact = 0
+    for idx in idxs:
+        drop_prompt = ' '.join(split_prompt[:idx] + split_prompt[idx+1:])
+        split_features = clip_model.get_features(drop_prompt)[0]
+        cos_diff = 1 - (orig_diff +  mathutils.cosine_sim(mathutils.norm_t(orig_features),  mathutils.norm_t(split_features)).item())
+        total_impact += cos_diff
+        impact_tuples.append([cos_diff, split_prompt[idx], drop_prompt])
+        
+    impact_tuples.sort(reverse=True)
+    
+    if normalize:
+        for idx in range(len(impact_tuples)):
+            impact_tuples[idx][0] /= total_impact
+    
+    return [WordImpact(*impact) for impact in impact_tuples]
+
+def rank_token_impact(tokens, clip_model, idxs=None, target_features=None, normalize=True):
+    full_features = clip_model.get_features(tokens)[0]
+    if target_features is None:
+        target_features = full_features
+    end_idx = find_end_idx(tokens)
+    if idxs is None:
+        idxs = range(1, end_idx)
+        
+    if len(idxs) < 2:
+        return [TokenImpact(1, 0)]
+    
+    tokens = tokens.view(-1)
+    
+    orig_diff = 1 - mathutils.cosine_sim( mathutils.norm_t(target_features),  mathutils.norm_t(full_features)).item()
+    impact_tuples = []
+    total_impact = 0
+    for idx in idxs:
+        drop_tokens = torch.cat((tokens[:idx], tokens[idx+1:], torch.zeros(1, device=tokens.device, dtype=tokens.dtype)))
+        split_features = clip_model.get_features(drop_tokens)[0]
+        cos_diff = 1 - (orig_diff +  mathutils.cosine_sim(mathutils.norm_t(target_features),  mathutils.norm_t(split_features)).item())
+        total_impact += cos_diff
+        impact_tuples.append([cos_diff, idx])
+        
+    if normalize:
+        for idx in range(len(impact_tuples)):
+            impact_tuples[idx][0] /= total_impact
+    
+    return [TokenImpact(*impact) for impact in impact_tuples]
+
+def trim_prompt(prompt, clip_model, thresh=0.1, orig_features=None):
+    if not prompt:
+        return
+    curr_prompt = prompt
+    next_prompt = curr_prompt
+    net_impact = 0
+    while net_impact < thresh and next_prompt:
+        curr_prompt = next_prompt
+
+        last_impact, _, next_prompt = rank_word_impact(curr_prompt, clip_model, orig_features=orig_features)[-1]
+        net_impact += last_impact
+
+    return curr_prompt
+
+def decode_tokens(tokens):
+    if isinstance(tokens, list):
+        tokens = torch.stack(tuple(tokens))
+    if len(tokens.shape) == 1:
+        tokens = tokens.view(1, *tokens.shape)
+
+    tokens = change_rev(tokens, False).view(tokens.shape)
+
+    texts = [clip_tokenizer.decode(toks.cpu().numpy()) for toks in tokens]
+    for idx in range(len(texts)):
+        texts[idx] = texts[idx].replace("<|startoftext|>", "")
+        end_idx = texts[idx].find("<|endoftext|>")
+
+        if end_idx != -1:
+            texts[idx] = texts[idx][:end_idx]
+
+    return texts
