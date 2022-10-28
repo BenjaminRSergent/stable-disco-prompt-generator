@@ -45,7 +45,7 @@ class BeamSearchConfig:
     def __init__(self, model_beams=40, clip_beams=40,
                  num_inter_beams=3500, max_inter_beams=5000, inter_beam_mul = 2,
                  rating_weight=1.0, clip_weight=2, 
-                 strong_start_beams=20000,
+                 strong_start_beams=40000,
                  strong_start_iters=6,
                  enable_upgrades=True,
                  ascii_only=True, allow_banned=False, add_evolution_beams=False,

@@ -269,6 +269,8 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
 
     # TODO: custom mask
     def get_next_probs(self, memory, tokens=None, rev_tokens=None, forward_weight=0.5, ascii_only=True, no_banned=True, custom_mask=None):
+        no_banned = False
+        ascii_only=False
         if tokens is not None:
             num_batch = tokens.size(0)
             size = tokens.size(1)
