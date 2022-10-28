@@ -80,10 +80,14 @@ def make_random_features_uniform(cnt=1, device=None, dtype=torch.float):
         device = torchutils.get_default_device()
     return norm_t(2*(torch.rand((cnt, sdconsts.feature_width), device=device, dtype=dtype) - 0.5))
 
-def make_random_text_features(cnt=1, device=None, dtype=torch.float):
+def make_random_text_features(cnt=1, device=None, dtype=torch.float, normalize=True):
     features = make_random_features_norm(cnt=cnt, device=device, dtype=dtype)
     mean, std = get_text_feature_stats(device=device)
-    return features * std + mean
+    ret = features * std + mean
+    if normalize:
+        ret = norm_t(ret)
+    
+    return ret
 
 def make_random_features_norm(cnt=1, device=None, dtype=torch.float):
     if device is None:
