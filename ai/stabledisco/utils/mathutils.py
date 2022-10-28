@@ -92,7 +92,7 @@ def make_random_text_features(cnt=1, device=None, dtype=torch.float, normalize=T
 def make_random_features_norm(cnt=1, device=None, dtype=torch.float):
     if device is None:
         device = torchutils.get_default_device()
-    print(device)
+
     return norm_t(torch.randn((cnt, sdconsts.feature_width), device=device, dtype=dtype))
 
 def random_scalar_norm(cnt=1, mean=0.025, std=0.25, min_scale=0.05, device=None, dtype=torch.float):
@@ -111,7 +111,6 @@ def get_text_feature_stats(device = None):
     if device is None:
         device = torchutils.get_default_device()
     
-    print(f"Stats {device}")
     if device not in _text_feature_stats_dict:
         _text_feature_stats_dict[device] = (_text_feature_means.to(device), _text_feature_stds.to(device))
     
