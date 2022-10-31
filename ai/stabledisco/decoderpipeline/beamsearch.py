@@ -279,62 +279,23 @@ class BeamSearcher:
         
         upgrades_allowed = search_state.config.enable_upgrades and tokens_added >= search_state.upgrade_config.upgrade_iter_start 
         
-        if upgrades_allowed and force_upgrade:# or search_state.iter_without_improvement > search_state.upgrade_config.full_upgrade_threshold):
-            # Upgrade the high clip score beam most different from the top. to increase the chance
-            # of finding improvements
-            last_score = self._upgrader._calculator.score_tokens(search_state.features, top_beam)[0]
-            to_upgrade = [top_beam]#self._clip_model.get_n_most_disim([search_state.final_beam_tokens[-1]], stack, n=1)[0]]
-            print(f"Upgrading  {self._tokens_model.decode(to_upgrade)}")
-            
-            for orig_beam in to_upgrade:#, top_beam_idxs[0]]:
-                beam_eot_idx = sdutils.find_end_idx(orig_beam)
-                new_beam = orig_beam.clone()
-                
-                cap_margin = 8
-                
-                # TODO: Pass memory directly
-                state = self._upgrader._create_state(search_state.features, new_beam)
-                # Upgrade with increasing candidate count 
-                for div in [4, 2, 1]:
-                    new_beam, _ = self._upgrader.single_upgrade_pass(search_state.features, new_beam, state=state,
-                                                                    num_candidates=search_state.upgrade_config.baseline_cands//div, decay_factor=1.0)
-                    
-                # Extra candidates for the ends
-                new_beam, _ = self._upgrader.single_upgrade_pass(search_state.features, new_beam, state=state,
-                                                                 num_candidates=2*search_state.upgrade_config.baseline_cands, decay_factor=1.0,
-                                                                 start_idx=beam_eot_idx-cap_margin)
-                new_beam, _ = self._upgrader.single_upgrade_pass(search_state.features, new_beam, state=state,
-                                                                 num_candidates=2*search_state.upgrade_config.baseline_cands, decay_factor=1.0,
-                                                                 start_idx=1, end_idx=1+cap_margin,)
-                
-                # One more pass after upgrading the ends
-                new_beam, _ = self._upgrader.single_upgrade_pass(search_state.features, new_beam, state=state,
-                                                                 num_candidates=search_state.upgrade_config.baseline_cands, decay_factor=1.0)
-                
-                search_state.last_start_upgrade = beam_eot_idx
-
-                upgraded_features = self._clip_model.features_from_tokens(new_beam.view(1, -1))
-                cosine_sim = self._clip_model.cosine_similarity(search_state.features, upgraded_features)[0]
-                
-                if search_state.config.verbose:
-                    orig_features = self._clip_model.features_from_tokens(orig_beam.view(1, -1))
-                    orig_sim = self._clip_model.cosine_similarity(search_state.features, orig_features)[0]
-                    orig_rating = self._ratings_model(orig_features)[0].item()
-
-                    upgraded_rating = self._ratings_model(upgraded_features)[0].item()
-                    print(f"Upgraded changed cosine sim from {orig_sim} to {cosine_sim: 0.3f} and estimated quality from {orig_rating: 0.3f} to {upgraded_rating: 0.3f}:\n {self._tokens_model.decode(new_beam)[0]}")
-
-                
-                search_state.curr_beams.append((candidates[top_beam_idxs[0]].prob, new_beam[:beam_eot_idx].clone()))
-                search_state.last_upgrade_iter = beam_eot_idx
-
-            search_state.times_upgraded += 1
-        elif upgrades_allowed and search_state.iter_without_improvement != 0 and search_state.iter_without_improvement % search_state.upgrade_config.full_upgrade_threshold == 0:
+        if upgrades_allowed and force_upgrade or (search_state.iter_without_improvement != 0 and search_state.iter_without_improvement % search_state.upgrade_config.full_upgrade_threshold == 0):
+            print(f"Upgrading  {self._tokens_model.decode(top_beam)}")
+         
             beam_eot_idx = sdutils.find_end_idx(top_beam)
             new_beam = top_beam.clone()
             state = self._upgrader._create_state(search_state.features, new_beam)
             con_upgrades = (search_state.iter_without_improvement//search_state.upgrade_config.full_upgrade_threshold)
             curr_cands = search_state.upgrade_config.baseline_cands * con_upgrades
+            
+            # Extra candidates for the ends
+            cap_margin = 4
+            new_beam, _ = self._upgrader.single_upgrade_pass(search_state.features, new_beam, state=state,
+                                                                num_candidates=2*search_state.upgrade_config.baseline_cands, decay_factor=1.0,
+                                                                start_idx=beam_eot_idx-cap_margin)
+            new_beam, _ = self._upgrader.single_upgrade_pass(search_state.features, new_beam, state=state,
+                                                                num_candidates=2*search_state.upgrade_config.baseline_cands, decay_factor=1.0,
+                                                                start_idx=1, end_idx=1+cap_margin,)
             
             for div in [4, 2, 1, 2, 4]:
                     new_beam, _ = self._upgrader.single_upgrade_pass(search_state.features, new_beam, state=state,
@@ -345,7 +306,7 @@ class BeamSearcher:
         
             upgraded_features = self._clip_model.features_from_tokens(top_beam.view(1, -1))
             cosine_sim = self._clip_model.cosine_similarity(search_state.features, upgraded_features)[0]
-            # TODO: insert token
+            search_state.times_upgraded += 1
                 
             
             

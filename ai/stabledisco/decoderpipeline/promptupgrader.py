@@ -253,11 +253,11 @@ class PromptUpgrader:
             if self._verbose:
                 print(f"Adding {rem_tokens} tokens")
             for _ in range(int(rem_tokens.item())):
-                percent_done = (state.get_end_idx())/max_tokens
+                percent_done = (state.get_end_idx().item())/max_tokens
                 insert_cands = percent_done*min_insert_cands + (1-percent_done)*max_insert_cands
                 
                 old_best_score = state.tmp_best_score
-                new_tokens, best_score = self._insert_token(state, num_cands=int(insert_cands.item()))
+                new_tokens, best_score = self._insert_token(state, num_cands=int(insert_cands))
                 state.update_tokens_if_better(new_tokens, best_score)
                 
                 new_tokens, best_score = self.single_upgrade_pass(state.target_features, tokens, quick_pass_cands, state=state)
