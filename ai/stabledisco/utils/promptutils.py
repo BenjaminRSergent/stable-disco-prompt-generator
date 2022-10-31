@@ -141,7 +141,10 @@ def trim_prompt(prompt, clip_model, thresh=0.1, orig_features=None):
     while net_impact < thresh and next_prompt:
         curr_prompt = next_prompt
 
-        last_impact, _, next_prompt = rank_word_impact(curr_prompt, clip_model, orig_features=orig_features)[-1]
+        last_impact = rank_word_impact(curr_prompt, clip_model, orig_features=orig_features)
+        if not last_impact:
+            return ""
+        last_impact, _, next_prompt = last_impact[-1]
         net_impact += last_impact
 
     return curr_prompt
