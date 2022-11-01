@@ -42,7 +42,7 @@ class PromptUpgrader:
             self.tmp_best_score = self.curr_best_score
 
         def get_end_idx(self):
-            return sdutils.find_end_idx(self.tmp_best_tokens)
+            return sdutils.find_end_idx(self.tmp_best_tokens).item()
 
         def get_best(self, rev_ret):
             to_ret = self.tmp_best_tokens
@@ -252,8 +252,8 @@ class PromptUpgrader:
             
             if self._verbose:
                 print(f"Adding {rem_tokens} tokens")
-            for _ in range(int(rem_tokens.item())):
-                percent_done = (state.get_end_idx().item())/max_tokens
+            for _ in range(int(rem_tokens)):
+                percent_done = (state.get_end_idx())/max_tokens
                 insert_cands = percent_done*min_insert_cands + (1-percent_done)*max_insert_cands
                 
                 old_best_score = state.tmp_best_score

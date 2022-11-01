@@ -327,6 +327,7 @@ class BeamSearcher:
     def _get_candidate_beams(self, search_state):
         # Get the model's estimate for the next token's probability for each beam
         curr_tokens = torch.stack(tuple((x[1] for x in search_state.curr_beams)))
+        
         token_probs = self._tokens_model.get_next_probs(search_state.memory, curr_tokens, ascii_only=search_state.config.ascii_only)
         token_probs = self._safe_log(torch.relu(token_probs))
         token_probs = token_probs / token_probs.norm(dim=-1, keepdim=True)
@@ -348,7 +349,7 @@ class BeamSearcher:
 
         # Convert the 1D indices into 2D to associate each with their parent to get their previous tokens
         candidate_idxs = torchutils.unravel_torch_idx(candidate_idxs, len(clip_tokenizer.encoder))
-
+        
         def make_candidate_beam(prob, idx):
             return BeamSearcher.CandidateBeam(prob, search_state.curr_beams[idx[0]][1], idx[1])
 

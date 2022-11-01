@@ -39,7 +39,7 @@ def find_end_idx(tokens):
     end_token = sdconsts.sot_token if is_rev_tokens(tokens) else sdconsts.eot_token
     end_idx_arg = torch.argwhere(tokens == end_token)[:,1]
     if end_idx_arg.size(0) == 0:
-        return -1
+        return torch.tensor([-1], device=tokens.device)
     return end_idx_arg
     
 def get_single_word_token(word):
