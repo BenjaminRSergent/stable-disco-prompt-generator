@@ -97,7 +97,10 @@ class PromptUpgrader:
         return PromptUpgrader.PromptState(self, target_features, memory, tokens, curr_best_score)
 
     # TODO: Token insertions
-    def upgrade(self, target_features, prompt, do_large_cap_pass=True, candidate_cnt=4096, add_stride=10, max_tokens=sdconsts.prompt_token_len, orig_start_idx=1, orig_end_idx=sdconsts.prompt_token_len, max_iters=5, add_first=True, state=None):
+    def upgrade(self, target_features, prompt,
+                do_large_cap_pass=True,
+                candidate_cnt=4096, max_tokens=sdconsts.prompt_token_len,
+                orig_start_idx=1, orig_end_idx=sdconsts.prompt_token_len, max_iters=5, add_first=True, state=None):
         # TODO: Mask place holders when ranking tokens
         with torch.no_grad():
             if not state:
@@ -117,7 +120,7 @@ class PromptUpgrader:
             
             end_idx = state.get_end_idx() 
             if add_first:
-                self.add_tokens(state.target_features, state.best_tokens, pass_cands=min_cands, max_tokens=(max_tokens+end_idx)/2, add_stride=add_stride, state=state, rev_ret=False)
+                self.add_tokens(state.target_features, state.best_tokens, pass_cands=min_cands, max_tokens=(max_tokens+end_idx)/2, state=state, rev_ret=False)
             
             early_divs = [8, 4, 2]
             for div in early_divs:

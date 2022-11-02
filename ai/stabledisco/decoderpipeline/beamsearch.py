@@ -219,7 +219,7 @@ class BeamSearcher:
             self.next_beam_scores = None
             
         def get_upgrade_cands(self):
-            con_upgrades = (self.iter_without_improvement//self._upgrade_config.full_upgrade_threshold)
+            con_upgrades = (self.iter_without_improvement//self._upgrade_config.upgrade_threshold)
             return self._upgrade_config.baseline_cands * con_upgrades
             
         def should_upgrade(self):
