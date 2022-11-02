@@ -42,7 +42,7 @@ class PromptUpgrader:
             self.tmp_best_score = self.curr_best_score
 
         def get_end_idx(self):
-            return sdutils.find_end_idx(self.tmp_best_tokens).item()
+            return sdutils.find_end_idx(self.tmp_best_tokens)
 
         def get_best(self, rev_ret):
             to_ret = self.tmp_best_tokens
@@ -195,12 +195,10 @@ class PromptUpgrader:
                 
                 reverse_iterate = state.passes_finished % 2 == 0
 
+                new_tokens, new_best = self._run_upgrade_cycle(target_features, new_tokens, new_best, num_candidates, state.memory, decay_factor=decay_factor, start_idx=start_idx, end_idx=end_idx, reverse_iterate = False)
+                new_tokens, new_best = self._run_upgrade_cycle(target_features, new_tokens, new_best, num_candidates, state.memory, decay_factor=decay_factor, start_idx=start_idx, end_idx=end_idx, reverse_iterate = reverse_iterate)
                 new_tokens, new_best = self._run_upgrade_cycle(target_features, new_tokens, new_best, num_candidates, state.memory,
-                                                                            decay_factor=decay_factor, start_idx=start_idx, end_idx=end_idx, forward_weight=0, reverse_iterate = False)
-                new_tokens, new_best = self._run_upgrade_cycle(target_features, new_tokens, new_best, num_candidates, state.memory,
-                                                            decay_factor=decay_factor, start_idx=start_idx, end_idx=end_idx, forward_weight=None, reverse_iterate = reverse_iterate)
-                new_tokens, new_best = self._run_upgrade_cycle(target_features, new_tokens, new_best, num_candidates, state.memory,
-                                                                            decay_factor=decay_factor, start_idx=start_idx, end_idx=end_idx, forward_weight=1, reverse_iterate = True)
+                                                                            decay_factor=decay_factor, start_idx=start_idx, end_idx=end_idx, reverse_iterate = True)
 
                 state.update_tokens_if_better(new_tokens, new_best)
 
@@ -281,7 +279,7 @@ class PromptUpgrader:
     def _insert_token(self, state, num_cands=32*2, ave_to_check=15):
         if state.tmp_best_tokens[-1] == sdconsts.sot_token:
             print("Attempted to insert into a full token tensor")
-            return
+            return state.get_best()
         
         prompt_end = state.get_end_idx()
         
@@ -302,14 +300,12 @@ class PromptUpgrader:
             
             tokens[curr_end+1:] = tokens[curr_end:-1].clone()
             tokens[curr_end] = 0
-            curr_forward_weight = curr_end/prompt_end
             
             curr_end_idx = sdutils.find_end_idx(tokens)
             rev_tokens = sdutils.rev_tokens(tokens)[0]
             
             rev_idx = max(curr_end_idx-curr_end, 1)
             replacement_probs = self._tokens_model.get_next_probs(state.memory,
-                                                                  forward_weight=curr_forward_weight,
                                                                   tokens=rev_tokens[:rev_idx].unsqueeze(0),
                                                                   rev_tokens=tokens[:curr_end].unsqueeze(0),
                                                                   ascii_only=self._ascii_only, no_banned=self._no_banned)[0]
@@ -413,7 +409,7 @@ class PromptUpgrader:
 
         return tokens, curr_best_score
 
-    def _run_upgrade_cycle(self, target_features, tokens, curr_best_score, num_cands, memory, ave_tokens=15, decay_factor=1.0, print_freq=0, start_idx=1, end_idx=-1, forward_weight=None, reverse_iterate=None):
+    def _run_upgrade_cycle(self, target_features, tokens, curr_best_score, num_cands, memory, ave_tokens=15, decay_factor=1.0, print_freq=0, start_idx=1, end_idx=-1, reverse_iterate=None):
         start_idx = max(1, start_idx)
         # TODO: Wrap end idx
         last_idx = sdutils.find_end_idx(tokens)
@@ -426,8 +422,6 @@ class PromptUpgrader:
             to_upgrade = list(range(start_idx, end_idx))
         to_upgrade = [last_idx - idx for idx in to_upgrade]
 
-        if reverse_iterate is None:
-            reverse_iterate = forward_weight is not None and forward_weight > 0.5
         if reverse_iterate:
             to_upgrade = to_upgrade[::-1]
         
@@ -463,15 +457,10 @@ class PromptUpgrader:
                 print(f"Finished {curr_end} tokens with {num_cands} candidates per token")
                 self._print_result(target_features, tokens, curr_best_score, True)
 
-            if forward_weight is None:
-                curr_forward_weight = curr_end/last_idx
-            else:
-                curr_forward_weight = forward_weight
                 
             rev_tokens = sdutils.rev_tokens(tokens)[0]
             rev_idx = max(end_idx-curr_end, 1)
             replacement_probs = self._tokens_model.get_next_probs(memory,
-                                                                  forward_weight=curr_forward_weight,
                                                                   tokens=rev_tokens[:rev_idx].unsqueeze(0),
                                                                   rev_tokens=tokens[:curr_end].unsqueeze(0),
                                                                   ascii_only=self._ascii_only,

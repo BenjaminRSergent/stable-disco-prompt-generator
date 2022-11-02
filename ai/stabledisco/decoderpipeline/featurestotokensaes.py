@@ -1,6 +1,5 @@
 import copy
 import re
-import typing
 
 import ai.stabledisco.constants as sdconsts
 import ai.stabledisco.utils as sdutils
@@ -290,7 +289,7 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         return texts
 
     # TODO: custom mask
-    def get_next_probs(self, memory, tokens=None, rev_tokens=None, forward_weight=0.5, ascii_only=True, no_banned=True, custom_mask=None, allow_end=False):
+    def get_next_probs(self, memory, tokens=None, rev_tokens=None, ascii_only=True, no_banned=True, custom_mask=None, allow_end=False):
         if tokens is not None:
             num_batch = tokens.size(0)
             size = tokens.size(1)
@@ -385,7 +384,7 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         )
         
         vocab_out = self._vocab_out(decoder_out[:, min(idx_to_find+1, 76)])
-        vocab_out[torch.arange(vocab_out.size(0), device=self._device, dtype=torch.long), tokens[:,-1].item()] /= 2
+        vocab_out[torch.arange(vocab_out.size(0), device=self._device, dtype=torch.long), tokens[:,-1]] /= 2
     
 
         probs = torch.softmax(vocab_out, dim=-1)
@@ -418,8 +417,11 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         #norm_char_regex = re.compile(
         #    r"^[a-zA-Z0-9,!.-_^ ]*$"
         #)
+        #norm_char_regex = re.compile(
+        #    r"^[a-zA-Z0-9#\$=+%@\^ ,\.!\"\'\?():;_-{|}<=>]*$"
+        #)
         norm_char_regex = re.compile(
-            r"^[a-zA-Z0-9#\$=+%@\^ ,\.!\"\'\?():;_-{|}<=>]*$"
+            r"^[a-zA-Z0-9# ,\.]*$"
         )
         num_ascii = 0
         for token in clip_tokenizer.decoder.keys():
