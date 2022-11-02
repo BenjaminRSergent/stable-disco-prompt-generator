@@ -82,7 +82,7 @@ class PromptUpgrader:
             calculator = CombinedClipRatingCalculator(self._clip_model, self._rating_model, rating_weight=rating_weight)
         self._calculator = calculator
 
-    def _create_state(self, target_features, prompt):
+    def _create_state(self, target_features, prompt, memory=None):
         if self._verbose:
             print("Creating new state")
         target_features = target_features.view(1,-1).float()
@@ -91,12 +91,13 @@ class PromptUpgrader:
             tokens = clip.tokenize(prompt, truncate=True)[0].cuda()
         else:
             tokens = prompt.clone()
-        memory = self._tokens_model.features_to_memory(target_features).squeeze(0)
+        if memory is None:
+            memory = self._tokens_model.features_to_memory(target_features).squeeze(0)
         curr_best_score = self._calculator.score_tokens(target_features, tokens)[0].item()
         return PromptUpgrader.PromptState(self, target_features, memory, tokens, curr_best_score)
 
     # TODO: Token insertions
-    def upgrade(self, target_features, prompt, candidate_cnt=4096, add_stride=10, max_tokens=sdconsts.prompt_token_len, orig_start_idx=1, orig_end_idx=sdconsts.prompt_token_len, max_iters=5, add_first = True, state=None):
+    def upgrade(self, target_features, prompt, do_large_cap_pass=True, candidate_cnt=4096, add_stride=10, max_tokens=sdconsts.prompt_token_len, orig_start_idx=1, orig_end_idx=sdconsts.prompt_token_len, max_iters=5, add_first=True, state=None):
         # TODO: Mask place holders when ranking tokens
         with torch.no_grad():
             if not state:
@@ -126,14 +127,18 @@ class PromptUpgrader:
                 print(f"Upgrading start and end tokens")
             
             
-            _, new_best = self.single_upgrade_pass(state.target_features, state.best_tokens, max_cands, state=state, start_idx=end_idx-8, end_idx=end_idx, rev_ret=False, decay_factor=1.0)
-            _, new_best = self.single_upgrade_pass(state.target_features, state.best_tokens, min_cands, state=state, start_idx=end_idx-16, end_idx=end_idx, rev_ret=False, decay_factor=1.0)
-            print("Finished end pass")
-              
-            _, new_best = self.single_upgrade_pass(state.target_features, state.best_tokens, max_cands, state=state, start_idx=1, end_idx=8, rev_ret=False,decay_factor=1.0)
-            _, new_best = self.single_upgrade_pass(state.target_features, state.best_tokens, min_cands, state=state, start_idx=1, end_idx=16, rev_ret=False, decay_factor=1.0)
-            print("Finished start pass")
-            
+            if do_large_cap_pass:
+                
+                if self._verbose:
+                    print(f"Upgrading end tokens with a large candidate count")
+                _, new_best = self.single_upgrade_pass(state.target_features, state.best_tokens, max_cands, state=state, start_idx=end_idx-8, end_idx=end_idx, rev_ret=False, decay_factor=1.0)
+                _, new_best = self.single_upgrade_pass(state.target_features, state.best_tokens, min_cands, state=state, start_idx=end_idx-16, end_idx=end_idx, rev_ret=False, decay_factor=1.0)
+                print("Finished end pass")
+                
+                _, new_best = self.single_upgrade_pass(state.target_features, state.best_tokens, max_cands, state=state, start_idx=1, end_idx=8, rev_ret=False,decay_factor=1.0)
+                _, new_best = self.single_upgrade_pass(state.target_features, state.best_tokens, min_cands, state=state, start_idx=1, end_idx=16, rev_ret=False, decay_factor=1.0)
+                print("Finished start pass")
+                
             if not add_first:
                 self.add_tokens(state.target_features, state.best_tokens, pass_cands=min_cands, max_tokens=(max_tokens+end_idx)/2, add_stride=add_stride, state=state, rev_ret=False)
             
@@ -170,12 +175,13 @@ class PromptUpgrader:
                 if not _is_improvement_eps(new_best, old_best):
                     break
             
-            if self._verbose:
-                print(f"Upgrading end tokens with a large candidate count")
-                  
-            _, new_best = self.single_upgrade_pass(state.target_features, state.best_tokens, 5000, state=state, start_idx=end_idx-8, end_idx=end_idx, rev_ret=False, decay_factor=1.0)
-            _, new_best = self.single_upgrade_pass(state.target_features, state.best_tokens, min_cands, state=state, start_idx=end_idx-16, end_idx=end_idx, rev_ret=False, decay_factor=1.0)
-            print("Finished end pass")
+            if do_large_cap_pass:
+                if self._verbose:
+                    print(f"Upgrading end tokens with a large candidate count")
+                    
+                _, new_best = self.single_upgrade_pass(state.target_features, state.best_tokens, 5000, state=state, start_idx=end_idx-8, end_idx=end_idx, rev_ret=False, decay_factor=1.0)
+                _, new_best = self.single_upgrade_pass(state.target_features, state.best_tokens, min_cands, state=state, start_idx=end_idx-16, end_idx=end_idx, rev_ret=False, decay_factor=1.0)
+                print("Finished end pass")
 
             return state.get_best(True)
 
@@ -237,8 +243,10 @@ class PromptUpgrader:
 
             return state.get_best(rev_ret=rev_ret)
         
-    def add_tokens(self, target_features, tokens, max_insert_cands = 256, min_insert_cands=64, pass_cands=256, quick_pass_cands=32, add_stride=10, max_tokens=sdconsts.prompt_token_len,
-                   new_token_candidates=3000, refine_mul = 5/3, final_mul=1, state=None, rev_ret=True):
+    def add_tokens(self, target_features, tokens, max_insert_cands = 256,
+                   min_insert_cands=64, pass_cands=256, quick_pass_cands=32, 
+                   max_tokens=sdconsts.prompt_token_len,
+                   state=None, rev_ret=True):
         
         con_failed = 0
         max_con_failed = 5

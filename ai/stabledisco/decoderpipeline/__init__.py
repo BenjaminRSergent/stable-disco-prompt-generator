@@ -1,6 +1,5 @@
-from ai.stabledisco.decoderpipeline.beamsearch import (BeamSearchConfig,
-                                                       BeamSearcher,
-                                                       UpgradeConfig)
+from ai.stabledisco.decoderpipeline.beamsearch import (BeamSearcher,
+                                                       BeamSearcherFactory)
 from ai.stabledisco.decoderpipeline.featurestorating import \
     FeaturesToRatingModel
 from ai.stabledisco.decoderpipeline.featurestotokensaes import \
