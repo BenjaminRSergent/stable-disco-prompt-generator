@@ -111,6 +111,8 @@ class IsTextFeaturesModel(torchmodules.BaseModel):
                 features = features.view(1, -1)
             features = features / features.norm(dim=-1, keepdim=True)
             before_prob = self.get_text_prob(features)
+            if before_prob >= target_prob:
+                return features
             out_features = torch.clone(features)
             cosine_change = 0
             if verbose:

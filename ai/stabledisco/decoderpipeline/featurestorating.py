@@ -114,6 +114,8 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
                 features = features.view(1, -1)
             features = features / features.norm(dim=-1, keepdim=True)
             before_rating = self.get_rating(features)
+            if before_rating >= target_rating:
+                return features
             out_features = torch.clone(features)
             cosine_change = 0
             if verbose:

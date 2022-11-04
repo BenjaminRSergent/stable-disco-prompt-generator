@@ -33,6 +33,14 @@ def norm_t(x, dim=-1, keepdim=True):
 def cosine_sim(x, y):
     return unflatten(x) @ unflatten(y).T
 
+def round_to_multiple(x, base):
+    return base * round_t(x / base)
+
+def round_t(x):
+    if isinstance(x, torch.Tensor):
+        return torch.round(x)
+    return round(x)
+
 def calc_singular_vecs(features, cutoff=0.9, largest=True, weights=None, normalize=True):
     features /= features.norm(dim=-1, keepdim=True)
     svd = torch.linalg.svd(features.float())
@@ -70,6 +78,12 @@ def project_to_axis(to_project, axis):
     mag = torch.dot(to_project, axis)/axis.norm(dim=-1, keepdim=True)
     return mag * axis
 
+def project_to_basis(to_project, basis):
+    to_project = to_project
+    axis = flatten(axis)
+    mag = torch.dot(to_project, axis)/axis.norm(dim=-1, keepdim=True)
+    return torch.sum([project_to_axis(to_project, axis) for axis in basis])
+
 def make_random_feature_shifts(cnt=1, mean=0.025, std=0.25, min_scale=0.05, device=None, dtype=torch.float):
     shift = make_random_features_uniform(cnt, device=device)
     scale = random_scalar_norm(cnt, mean, std, min_scale, device=device, dtype=dtype)
@@ -80,14 +94,6 @@ def make_random_features_uniform(cnt=1, device=None, dtype=torch.float):
         device = torchutils.get_default_device()
     return norm_t(2*(torch.rand((cnt, sdconsts.feature_width), device=device, dtype=dtype) - 0.5))
 
-def make_random_text_features(cnt=1, device=None, dtype=torch.float, normalize=True):
-    features = make_random_features_norm(cnt=cnt, device=device, dtype=dtype)
-    mean, std = get_text_feature_stats(device=device)
-    ret = features * std + mean
-    if normalize:
-        ret = norm_t(ret)
-    
-    return ret
 
 def make_random_features_norm(cnt=1, device=None, dtype=torch.float):
     if device is None:

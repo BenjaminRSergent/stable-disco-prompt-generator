@@ -20,11 +20,13 @@ class UpgradeConfig:
                 upgrade_iter_start=10,
                 upgrade_threshold= 7,
                 cap_margin=4,
+                rating_weight=0.5,
                 verbose=True):
         self.baseline_cands = baseline_cands
         self.upgrade_iter_start = upgrade_iter_start 
         self.upgrade_threshold = upgrade_threshold
         self.cap_margin = cap_margin
+        self.rating_weight = rating_weight
         self.verbose = verbose
 
 class BeamSearchConfig:
@@ -145,6 +147,10 @@ class BeamSearcherFactory():
     
     def rating_weight(self, rating_weight):
         self._search_config.rating_weight = rating_weight
+        return self
+    
+    def upgrade_rating_weight(self, upgrade_rating_weight):
+        self._upgrade_config.rating_weight = upgrade_rating_weight
         return self
         
     def device(self, device):
@@ -277,7 +283,7 @@ class BeamSearcher:
         self._tokens_model = tokens_model
         self._ratings_model = ratings_model
         self._clip_model = clip_model
-        self._upgrader = decoderpipeline.PromptUpgrader(self._tokens_model, clip_model, self._ratings_model, rating_weight=0.0, verbose=True)
+        
         if search_config is None:
             search_config = BeamSearchConfig()
         self._search_config = search_config
@@ -285,6 +291,9 @@ class BeamSearcher:
         if upgrade_config is None:
             upgrade_config = UpgradeConfig()
         self._upgrade_config = upgrade_config
+        
+        upgrader_config = decoderpipeline.PromptUpgraderConfig(rating_weight=self._upgrade_config.rating_weight, verbose=True)
+        self._upgrader = decoderpipeline.PromptUpgrader(self._tokens_model, clip_model, self._ratings_model, config=upgrader_config)
         
     def beam_search(self, features, max_len=75, topk=1, start_tokens=None, print_freq=1):
 
@@ -386,17 +395,17 @@ class BeamSearcher:
             state = self._upgrader._create_state(search_state.features, new_beam, memory=search_state.memory)
             curr_cands = search_state.get_upgrade_cands()
             
-            new_beam, _ = self._upgrader.single_upgrade_pass(search_state.features, new_beam, state=state,
+            new_beam, _ = self._upgrader.replace_tokens(search_state.features, new_beam, state=state,
                                                                 num_candidates=self._upgrade_config.baseline_cands,
                                                                 decay_factor=1.0,
                                                                 start_idx=beam_eot_idx-self._upgrade_config.cap_margin)
-            new_beam, _ = self._upgrader.single_upgrade_pass(search_state.features, new_beam, state=state,
+            new_beam, _ = self._upgrader.replace_tokens(search_state.features, new_beam, state=state,
                                                                 num_candidates=self._upgrade_config.baseline_cands,
                                                                 decay_factor=1.0,
                                                                 start_idx=1, end_idx=1+self._upgrade_config.cap_margin,)
             
-            for div in [8, 8, 4, 4, 2]:
-                    new_beam, _ = self._upgrader.single_upgrade_pass(search_state.features, new_beam, state=state,
+            for div in [4, 4, 2, 1]:
+                    new_beam, _ = self._upgrader.replace_tokens(search_state.features, new_beam, state=state,
                                                                     num_candidates=curr_cands//div, decay_factor=1.0)
             
             search_state.curr_beams.append((candidates[top_beam_idxs[0]].prob, new_beam[:beam_eot_idx].clone()))

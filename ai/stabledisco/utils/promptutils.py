@@ -78,7 +78,8 @@ def is_rev_tokens(text_tokens):
     return text_tokens.view(-1)[0] == sdconsts.eot_token
 
 def rank_word_impact(prompt, clip_model, idxs=None, orig_features=None, normalize=True):
-    
+    # Add spaces between punctuation and numbers
+    prompt = decode_tokens(clip.tokenize(prompt)[0])
     full_features = clip_model.get_features(prompt)[0]
     if orig_features is None:
         orig_features = full_features
@@ -136,6 +137,8 @@ def rank_token_impact(tokens, clip_model, idxs=None, target_features=None, norma
     return [TokenImpact(*impact) for impact in impact_tuples]
 
 def trim_prompt(prompt, clip_model, thresh=0.1, orig_features=None):
+    if isinstance(prompt, torch.Tensor):
+        prompt = decode_tokens(prompt)
     if not prompt:
         return
     curr_prompt = prompt
@@ -207,8 +210,8 @@ def improve_feature_sum(features_list, feature_improver, weights=None,
                                              target_rating=target_rating, max_prob_diff=max_prob_diff,
                                              target_prob=target_prob, max_rating_diff=max_rating_diff)
 
-def get_features_and_singular(urls, cutoff=0.75, display_func=None, largest=True, cuda=True, normalize=True):
-    all_features, _ = get_img_features(urls, display_func=display_func, cuda=cuda, normalize=normalize)
+def get_features_and_singular(urls, clip_model, cutoff=0.75, display_func=None, largest=True, cuda=True, normalize=True):
+    all_features, _ = get_img_features(urls,clip_model,  display_func=display_func, cuda=cuda, normalize=normalize)
     return all_features, mathutils.calc_singular_vecs(all_features, cutoff=cutoff, largest=largest)
 
 def get_img_features(urls, clip_model, display_func=None, cuda=True, normalize=True):
@@ -255,6 +258,14 @@ def get_imgs_and_features(urls, clip_model, larger_width=704, display_func=None,
     
     return all_imgs, all_features, gen_width, gen_height
 
+def blend_text_features(features, other_features, alpha=1.0):
+    text_means, text_stds = get_text_feature_stats(features.device)
+    ret = features(1-alpha) + other_features*alpha
+    
+    zero_centered = ret - text_means
+    fix_variance  = zero_centered/text_stds
+    return mathutils.norm_t(fix_variance + text_means)
+
 def add_text_features(features, other_features, scale=1.0):
     text_means, text_stds = get_text_feature_stats(features.device)
     ret = features + other_features*scale
@@ -268,6 +279,16 @@ def add_features(features, other_features, scale=1.0):
     avg_mean = torch.mean(torch.stack((features, other_features*scale)), dim=0)
     return (features + other_features*scale - avg_mean)/text_stds + avg_mean
 
+def make_random_text_features(cnt=1, device=None, dtype=torch.float, normalize=True):
+    features = mathutils.make_random_features_norm(cnt=cnt, device=device, dtype=dtype)
+    mean, std = get_text_feature_stats(device=device)
+    ret = features * std + mean
+    if normalize:
+        ret = mathutils.norm_t(ret)
+    
+    return ret
+
+
 def get_text_feature_stats(device = None):
     if device is None:
         device = torchutils.get_default_device()
@@ -277,6 +298,7 @@ def get_text_feature_stats(device = None):
     
     return _text_feature_stats_dict[device]
     
+
 _text_feature_stats_dict = {}
 
 _text_feature_means = torch.Tensor([-3.9030e-03,  2.7220e-02,  2.1757e-02, -9.2000e-02, -5.6538e-02,
