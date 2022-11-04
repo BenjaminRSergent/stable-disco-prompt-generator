@@ -339,7 +339,7 @@ class PromptUpgrader:
                     continue
                 
                 new_tensor = tokens.clone()
-                new_tensor[curr_end] = replacement_token.int()
+                new_tensor[curr_end] = replacement_token
                 to_test.append(new_tensor)
 
         if not to_test:
@@ -493,7 +493,7 @@ class PromptUpgrader:
                 
                 new_tensor = tokens.clone()
 
-                new_tensor[curr_end] = replacement_token.int()
+                new_tensor[curr_end] = replacement_token
                 to_test.append(new_tensor)
 
             # TODO: Fix duplcate work
