@@ -305,6 +305,9 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
                 probs = torch.zeros(len(clip_tokenizer.encoder), device=self._device)
                 probs[sdconsts.sot_token] = 1
                 return probs.repeat((rev_tokens.shape[0], 1))
+            
+        
+        
 
         if tokens is not None:
             curr_embedded = self._clip_model.token_embedding(tokens)
@@ -333,18 +336,19 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
                 tgt_mask=tgt_mask,
                 tgt_key_padding_mask=(rev_tokens == 0),
             )
-                
+            
+        batch_idxs = torch.arange(num_batch, device=self._device, dtype=torch.long)
         if rev_tokens is None:
             vocab_out = self._vocab_out(decoder_out[:, -1])
-            vocab_out[torch.arange(vocab_out.size(0), device=self._device, dtype=torch.long), tokens[:,-1]] /= 2
+            vocab_out[batch_idxs, tokens[:,-1].long()] /= 2
         elif tokens is None:
             vocab_out = self._vocab_out(rev_decoder_out[:, -1])
-            vocab_out[torch.arange(vocab_out.size(0), device=self._device, dtype=torch.long), rev_tokens[:,-1]] /= 2
+            vocab_out[batch_idxs, rev_tokens[:,-1].long()] /= 2
         else:
             full_out = torch.cat((decoder_out[:, -1, :], rev_decoder_out[:, -1, :]), dim=-1)
             vocab_out = self._two_way_vocab_out(self._two_way_hidden(full_out))
-            vocab_out[torch.arange(vocab_out.size(0), device=self._device, dtype=torch.long), rev_tokens[:,-1]] /= 2
-            vocab_out[torch.arange(vocab_out.size(0), device=self._device, dtype=torch.long), tokens[:,-1]] /= 2
+            vocab_out[batch_idxs, rev_tokens[:,-1].long()] /= 2
+            vocab_out[batch_idxs, tokens[:,-1].long()] /= 2
             
 
         probs = torch.softmax(vocab_out, dim=-1)

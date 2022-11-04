@@ -43,7 +43,7 @@ def find_end_idx(tokens):
     end_idx_arg = torch.argwhere(tokens == end_token)[:,1]
     if end_idx_arg.size(0) == 0:
         return torch.tensor([-1], device=tokens.device)
-    return end_idx_arg
+    return end_idx_arg.long()
     
 def get_single_word_token(word):
     tokenized = clip.tokenize(word)[0]
@@ -79,7 +79,7 @@ def is_rev_tokens(text_tokens):
 
 def rank_word_impact(prompt, clip_model, idxs=None, orig_features=None, normalize=True):
     # Add spaces between punctuation and numbers
-    prompt = decode_tokens(clip.tokenize(prompt)[0])
+    prompt = decode_tokens(clip.tokenize(prompt)[0])[0]
     full_features = clip_model.get_features(prompt)[0]
     if orig_features is None:
         orig_features = full_features

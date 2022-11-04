@@ -31,7 +31,7 @@ class PromptUpgraderConfig:
         self.rating_weight = rating_weight
         self.calculator = calculator
         self.improve_eps = improve_eps
-        self.quick_pass_divs = quick_pass_cands
+        self.quick_pass_cands = quick_pass_cands
         self.max_iters = max_iters
         self.add_first = add_first
         self.do_large_cap_pass = do_large_cap_pass
@@ -95,6 +95,11 @@ class PromptUpgrader:
             self.tmp_best_score = score
 
         def update_tokens_if_better(self, new_tokens, new_best):
+            if isinstance(new_tokens, list):
+                new_tokens = new_tokens[0].view(-1)
+            if isinstance(new_best, list):
+                new_best = new_best[0]
+                
             is_improved = _is_improvement_eps(new_best, self.tmp_best_score)
             if is_improved:
                 self.tmp_best_score = new_best
@@ -130,6 +135,7 @@ class PromptUpgrader:
         else:
             tokens = prompt.clone()
             
+        tokens = tokens.long()
         if memory is None:
             memory = self._tokens_model.features_to_memory(target_features).squeeze(0)
         curr_best_score = self._calculator.score_tokens(target_features, tokens)[0].item()
@@ -247,11 +253,14 @@ class PromptUpgrader:
             start_end_idx = state.get_end_idx()
             
             self._verbose_print("Testing token removal")
-            trimmed_tokens = sdutils.trim_prompt(state.get_tokens(), max_sim_loss)
+            trimmed_prompt = sdutils.trim_prompt(state.get_tokens(), self._clip_model, thresh=max_sim_loss, orig_features=state.target_features)
+            trimmed_tokens = clip.tokenize(trimmed_prompt)[0].cuda()
             trimmed_score = self._calculator.score_tokens(state.target_features, trimmed_tokens)[0].item()
             state.set_tokens(trimmed_tokens, trimmed_score)
             
-            self._verbose_print(f"Removed {state.get_end_idx() - start_end_idx} tokens {self._tokens_model.decode(state.get_tokens())}")
+            num_removed = state.get_end_idx() - start_end_idx
+            if num_removed > 0:
+                self._verbose_print(f"Removed {num_removed} tokens {trimmed_prompt}")
 
             return state.get_best(True)
         
@@ -305,9 +314,8 @@ class PromptUpgrader:
         to_upgrade = list(range(1, prompt_end+1))
         
         random.shuffle(to_upgrade)
-        to_test = to_test[:ave_to_check]
         
-        for curr_end in to_test:
+        for curr_end in to_upgrade[:ave_to_check]:
             tokens = orig_tokens.clone()
             if tokens[curr_end] == sdconsts.eot_token: 
                 continue
@@ -316,13 +324,14 @@ class PromptUpgrader:
             tokens[curr_end] = 0
             
             curr_end_idx = sdutils.find_end_idx(tokens)
-            rev_tokens = sdutils.rev_tokens(tokens)[0]
+            rev_tokens = sdutils.change_rev(tokens, False)[0]
             
             rev_idx = max(curr_end_idx-curr_end, 1)
+            
             replacement_probs = self._tokens_model.get_next_probs(state.memory,
                                                                   tokens=rev_tokens[:rev_idx].unsqueeze(0),
                                                                   rev_tokens=tokens[:curr_end].unsqueeze(0),
-                                                                  ascii_only=self._ascii_only, no_banned=self._no_banned)[0]
+                                                                  ascii_only=self._config.ascii_only, no_banned=self._config.no_banned)[0]
             _, candidate_tokens = replacement_probs.topk(num_cands, dim=-1)
 
             for replacement_token in candidate_tokens:
@@ -330,11 +339,9 @@ class PromptUpgrader:
                     continue
                 
                 new_tensor = tokens.clone()
-
-                new_tensor[curr_end] = replacement_token
+                new_tensor[curr_end] = replacement_token.int()
                 to_test.append(new_tensor)
 
-        # TODO: Fix duplcate work
         if not to_test:
             return state.get_best()
         test_stack = torch.stack(tuple(to_test))
@@ -425,7 +432,8 @@ class PromptUpgrader:
 
     def _run_upgrade_cycle(self, num_cands, state, ave_tokens=15, decay_factor=1.0, print_freq=0, start_idx=1, end_idx=-1):
         start_idx = max(1, start_idx)
-        # TODO: Wrap end idx
+        
+        tokens, curr_best_score = state.get_best()
         last_idx = sdutils.find_end_idx(tokens)
         if end_idx == -1:
             end_idx = last_idx
@@ -467,13 +475,14 @@ class PromptUpgrader:
                 self._print_result(state.target_features, tokens, curr_best_score, True)
 
                 
-            rev_tokens = sdutils.rev_tokens(tokens)[0]
+            rev_tokens = sdutils.change_rev(tokens, False)[0]
             rev_idx = max(end_idx-curr_end, 1)
+            
             replacement_probs = self._tokens_model.get_next_probs(state.memory,
                                                                   tokens=rev_tokens[:rev_idx].unsqueeze(0),
                                                                   rev_tokens=tokens[:curr_end].unsqueeze(0),
-                                                                  ascii_only=self._ascii_only,
-                                                                  no_banned=self._no_banned)[0]
+                                                                  ascii_only=self._config.ascii_only,
+                                                                  no_banned=self._config.no_banned)[0]
             _, candidate_tokens = replacement_probs.topk(num_cands, dim=-1)
 
             to_test = [tokens.clone()]
@@ -484,17 +493,16 @@ class PromptUpgrader:
                 
                 new_tensor = tokens.clone()
 
-                new_tensor[curr_end] = replacement_token
+                new_tensor[curr_end] = replacement_token.int()
                 to_test.append(new_tensor)
 
             # TODO: Fix duplcate work
             test_stack = torch.stack(tuple(to_test))
             top_tokens, top_sim = self._calculator.rank(state.target_features, test_stack, 1)
 
-            if _is_improvement_eps(top_sim[0], curr_best_score):
+            if state.update_tokens_if_better(top_tokens[0][0], top_sim[0]):
                 ends.append(curr_end)
-                tokens = top_tokens[0][0]
-                curr_best_score = top_sim[0].item()
+                tokens, curr_best_score = state.get_best()
                 
                 #print(iter_num, len(to_upgrade))
                 
@@ -536,4 +544,6 @@ class PromptUpgrader:
         print(msg)
 
 def _is_improvement_eps(new_val, prev_val, improve_eps=1e-4):
-        return new_val - prev_val > improve_eps
+    if isinstance(new_val, list):
+        new_val = new_val[0]
+    return new_val - prev_val > improve_eps
