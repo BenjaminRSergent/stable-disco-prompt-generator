@@ -88,7 +88,7 @@ class TorchTrainer:
         num_to_acc: int,
         print_every: int,
         print_learning_rate=False,
-        clip_val=0.75
+        clip_val=0.5
     ):
         total_loss = 0
         running_loss = 0

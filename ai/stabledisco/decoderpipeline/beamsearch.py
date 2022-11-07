@@ -32,7 +32,7 @@ class UpgradeConfig:
 class BeamSearchConfig:
     # Default values are based on a bayesian optimization parameter search
     def __init__(self, model_beams=60, clip_beams=1000,
-                 num_inter_beams=1024, max_inter_beams=1024*3,
+                 num_inter_beams=1024, max_inter_beams=1024*4.5,
                  rating_weight=1.0, clip_weight=2, 
                  strong_start_beams=20000,
                  strong_start_iters=6,
@@ -312,8 +312,6 @@ class BeamSearcher:
                                                             search_config=self._search_config, upgrade_config=self._upgrade_config)
                 print(f"Starting beam search to find the top {topk} prompts of length {search_state.max_len}. Printing every {print_freq} tokens")
                 
-                if start_tokens:
-                    print(f"Start tokens are {start_tokens}")
                 tokens_to_find = min(search_state.max_len, self._tokens_model._seq_len - 1)
 
                 for _ in range(search_state.iter_num, tokens_to_find):
@@ -392,20 +390,20 @@ class BeamSearcher:
          
             beam_eot_idx = sdutils.find_end_idx(top_beam)
             new_beam = top_beam.clone()
-            state = self._upgrader._create_state(search_state.features, new_beam, memory=search_state.memory)
+            state = self._upgrader.create_state(search_state.features, new_beam, memory=search_state.memory)
             curr_cands = search_state.get_upgrade_cands()
             
-            new_beam, _ = self._upgrader.replace_tokens(search_state.features, new_beam, state=state,
+            new_beam, _ = self._upgrader.replace_tokens(state=state,
                                                                 num_candidates=self._upgrade_config.baseline_cands,
                                                                 decay_factor=1.0,
                                                                 start_idx=beam_eot_idx-self._upgrade_config.cap_margin)
-            new_beam, _ = self._upgrader.replace_tokens(search_state.features, new_beam, state=state,
+            new_beam, _ = self._upgrader.replace_tokens( state=state,
                                                                 num_candidates=self._upgrade_config.baseline_cands,
                                                                 decay_factor=1.0,
                                                                 start_idx=1, end_idx=1+self._upgrade_config.cap_margin,)
             
             for div in [4, 4, 2, 1]:
-                    new_beam, _ = self._upgrader.replace_tokens(search_state.features, new_beam, state=state,
+                    new_beam, _ = self._upgrader.replace_tokens(state=state,
                                                                     num_candidates=curr_cands//div, decay_factor=1.0)
             
             search_state.curr_beams.append((candidates[top_beam_idxs[0]].prob, new_beam[:beam_eot_idx].clone()))

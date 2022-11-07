@@ -58,7 +58,7 @@ def change_rev(text_tokens, ret_rev):
     if is_rev_tokens(text_tokens) != ret_rev:
         text_tokens = rev_tokens(text_tokens)
         
-    return text_tokens
+    return text_tokens.long()
 
 def rev_tokens(text_tokens):
     if isinstance(text_tokens, torch.Tensor) and len(text_tokens.shape) == 1:
@@ -101,7 +101,7 @@ def rank_word_impact(prompt, clip_model, idxs=None, orig_features=None, normaliz
         
     impact_tuples.sort(reverse=True)
     
-    if normalize:
+    if normalize and total_impact != 0:
         for idx in range(len(impact_tuples)):
             impact_tuples[idx][0] /= total_impact
     
@@ -130,13 +130,13 @@ def rank_token_impact(tokens, clip_model, idxs=None, target_features=None, norma
         total_impact += cos_diff
         impact_tuples.append([cos_diff, idx])
         
-    if normalize:
+    if normalize and total_impact != 0:
         for idx in range(len(impact_tuples)):
             impact_tuples[idx][0] /= total_impact
     
     return [TokenImpact(*impact) for impact in impact_tuples]
 
-def trim_prompt(prompt, clip_model, thresh=0.1, orig_features=None):
+def trim_prompt(prompt, clip_model, max_to_remove=sdconsts.prompt_token_len, thresh=0.1, orig_features=None):
     if isinstance(prompt, torch.Tensor):
         prompt = decode_tokens(prompt)
     if not prompt:
@@ -144,7 +144,8 @@ def trim_prompt(prompt, clip_model, thresh=0.1, orig_features=None):
     curr_prompt = prompt
     next_prompt = curr_prompt
     net_impact = 0
-    while net_impact < thresh and next_prompt:
+    iter_num = 0
+    while net_impact < thresh and next_prompt and iter_num < max_to_remove:
         curr_prompt = next_prompt
 
         last_impact = rank_word_impact(curr_prompt, clip_model, orig_features=orig_features)
@@ -152,6 +153,7 @@ def trim_prompt(prompt, clip_model, thresh=0.1, orig_features=None):
             return ""
         last_impact, _, next_prompt = last_impact[-1]
         net_impact += last_impact
+        iter_num += 1
 
     return curr_prompt
 
