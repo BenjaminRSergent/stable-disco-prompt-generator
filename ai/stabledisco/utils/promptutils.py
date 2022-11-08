@@ -1,7 +1,7 @@
+from collections import namedtuple
 import random
 from torch.cuda import traceback
 
-from torch.functional import namedtuple
 import ai.stabledisco.utils.imageutils as imgutils
 import ai.stabledisco.constants as sdconsts
 import ai.stabledisco.utils.mathutils as mathutils

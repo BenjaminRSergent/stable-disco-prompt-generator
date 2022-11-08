@@ -443,7 +443,6 @@ class PromptUpgrader:
 
             start_end_idx = state.get_end_idx()
 
-            self._verbose_print("Testing token removal")
             trimmed_prompt = sdutils.trim_prompt(
                 state.get_tokens(),
                 self._clip_model,
@@ -453,12 +452,12 @@ class PromptUpgrader:
             )
             trimmed_tokens = clip.tokenize(trimmed_prompt)[0].cuda()
             trimmed_score = self._calculator.score_tokens(state.target_features, trimmed_tokens)[0].item()
-            print(f"Removal. {state.get_score()} to {trimmed_score}")
+
             state.set_tokens(trimmed_tokens, trimmed_score)
 
             num_removed = start_end_idx - state.get_end_idx()
             if num_removed > 0:
-                self._verbose_print(f"Removed {num_removed} tokens {trimmed_prompt}")
+                self._verbose_print(f"Trimmed {num_removed} low impact tokens {trimmed_prompt}")
 
             return state.get_best(True)
 
@@ -699,8 +698,6 @@ class PromptUpgrader:
         top_features = self._clip_model.features_from_tokens(state.get_best_tokens(), verbosity=0)
         top_sim = self._clip_model.cosine_similarity(state.target_features, top_features)[0]
         top_rating = self._rating_model(top_features)[0].item()
-
-        print(top_sim, self._config.target_sim, top_rating, self._config.target_rating)
 
         return top_sim >= self._config.target_sim and top_rating >= self._config.target_rating
 
