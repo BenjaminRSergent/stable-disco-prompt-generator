@@ -22,9 +22,7 @@ class CosineLoss(nn.Module):
         exp_loss = nth_root(cosine_diffs, self._root)
 
         if self._use_scale:
-            scale_diff = (
-                1 + torch.abs(y_target_norm_val - output_norm_val) / y_target_norm_val
-            )
+            scale_diff = 1 + torch.abs(y_target_norm_val - output_norm_val) / y_target_norm_val
             exp_loss = scale_diff * exp_loss
 
         return exp_loss.mean()
@@ -40,9 +38,7 @@ def cosine_loss(output, y_target, root=2, use_scale=False):
     exp_loss = nth_root(cosine_diffs, root)
 
     if use_scale:
-        scale_diff = (
-            1 + torch.abs(y_target_norm_val - output_norm_val) / y_target_norm_val
-        )
+        scale_diff = 1 + torch.abs(y_target_norm_val - output_norm_val) / y_target_norm_val
         exp_loss = scale_diff * exp_loss
 
     return exp_loss.mean()

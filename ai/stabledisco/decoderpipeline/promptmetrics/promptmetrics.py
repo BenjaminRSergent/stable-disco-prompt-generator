@@ -9,14 +9,10 @@ from ai.stabledisco.clipmodel import ClipModel
 class MetricsCalculator(abc.ABC):
     def rank(self, target_features, tokens, top_count):
         scores = self.score_tokens(target_features, tokens)
-        top_scores, top_labels = (
-            scores.float().cpu().topk(top_count, dim=-1)
-        )
-        top_tokens = [
-            tokens[[top_labels][i].numpy()] for i in range(top_count)
-        ]
+        top_scores, top_labels = scores.float().cpu().topk(top_count, dim=-1)
+        top_tokens = [tokens[[top_labels][i].numpy()] for i in range(top_count)]
         top_scores = [top_scores[i].numpy() for i in range(top_count)]
-        
+
         return top_tokens, top_scores
 
     def arg_sort(self, target_features, tokens, top_count):
@@ -24,7 +20,7 @@ class MetricsCalculator(abc.ABC):
 
         top_labels = torch.argsort(scores, dim=-1)
         top_scores = [scores[i] for i in range(top_count)]
-        
+
         return top_labels, top_scores
 
     @abc.abstractmethod
@@ -43,7 +39,10 @@ class ClipCalculator(MetricsCalculator):
 
 
 class RatingCalculator(MetricsCalculator):
-    def __init__(self, to_rating_model: torch.nn.Module,) -> None:
+    def __init__(
+        self,
+        to_rating_model: torch.nn.Module,
+    ) -> None:
         super().__init__()
         self._to_rating_model = to_rating_model
 
@@ -53,7 +52,14 @@ class RatingCalculator(MetricsCalculator):
 
 
 class CombinedClipRatingCalculator(MetricsCalculator):
-    def __init__(self, clip_model: ClipModel, to_rating_model: torch.nn.Module, rating_weight=1.0, clip_weight=1.0, min_target_rating=7.75) -> None:
+    def __init__(
+        self,
+        clip_model: ClipModel,
+        to_rating_model: torch.nn.Module,
+        rating_weight=1.0,
+        clip_weight=1.0,
+        min_target_rating=7.75,
+    ) -> None:
         super().__init__()
         self._clip_model = clip_model
         self._to_rating_model = to_rating_model
@@ -68,34 +74,36 @@ class CombinedClipRatingCalculator(MetricsCalculator):
         # Reward a 0.055 increase in similarity the same as a 1.0 increase in rating at baseline.
         # That scale roughly maps to typical values and changes during evolution
         sim_step_scale = 0.02 / self._clip_weight
-        
+
         # Only look at top percent
         # The typical starting point for a decent prompt is cosine sim 0.45
         sim_floor = 0.5
         sim_fitness = self._clip_model.cosine_similarity(target_features, token_features).unsqueeze(0)
         sim_fitness = self._scale_fitness_linear(sim_fitness, mid_val=sim_floor, step=sim_step_scale, max_val=1.0)
-        
+
         # The typical starting point for a decent rating is 7.5
         if target_rating is None:
             target_rating = max(self._get_target_rating_for(target_features), self._min_target_rating)
-        
+
         min_rating = 7.0
         mid_rating = target_rating
         max_rating = max(target_rating, 10)
         rating_fitness = self._to_rating_model(token_features).unsqueeze(0)
-        rating_fitness = self._rating_weight * self._scale_fitness_decay(rating_fitness, min_val = min_rating, mid_val=mid_rating, max_val=max_rating)
-        
+        rating_fitness = self._rating_weight * self._scale_fitness_decay(
+            rating_fitness, min_val=min_rating, mid_val=mid_rating, max_val=max_rating
+        )
+
         return sim_fitness + rating_fitness
-    
+
     @lru_cache(maxsize=32)
     def _get_target_rating_for(self, target_features):
-        return self._to_rating_model(target_features.view(1,-1))[0].item()
+        return self._to_rating_model(target_features.view(1, -1))[0].item()
 
     def _scale_fitness_linear(self, fitness, mid_val, step, max_val=1.0):
         # Center on mid-val linearly increasing by step
         ret = (torch.clamp(fitness, max=max_val) - mid_val) / step
         return ret.view(-1)
-    
+
     def _scale_fitness_decay(self, fitness, min_val, mid_val, max_val):
         # Halve growth after the midval. Fitness is 1 at midval
         fitness = torch.clamp(fitness, max=max_val)
@@ -109,10 +117,7 @@ class CombinedClipRatingCalculator(MetricsCalculator):
         below_idx = fitness < mid_val
         above_idx = fitness >= mid_val
 
-        fitness[below_idx] = 2*fitness[below_idx] - mid_val
-        fitness[above_idx] = fitness[above_idx] 
+        fitness[below_idx] = 2 * fitness[below_idx] - mid_val
+        fitness[above_idx] = fitness[above_idx]
 
-        
         return fitness.view(-1)
-        
-        

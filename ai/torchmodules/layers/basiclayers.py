@@ -40,15 +40,11 @@ class Normalization(nn.Module):
             self._batch_layer = IdentityLayer()
         elif norm_type.value == self.NormType.BATCH.value:
             if output_shape is None:
-                raise Exception(
-                    "Batch norm requires an output shape, not including batch dimension"
-                )
+                raise Exception("Batch norm requires an output shape, not including batch dimension")
             self._batch_layer = nn.BatchNorm1d(output_shape)
         elif norm_type.value == self.NormType.LAYER.value:
             if output_shape is None:
-                raise Exception(
-                    "Layer norm requires an output shape, not including batch dimension"
-                )
+                raise Exception("Layer norm requires an output shape, not including batch dimension")
             self._batch_layer = nn.LayerNorm(output_shape)
         else:
             raise Exception(f"Bad val {norm_type}")
@@ -128,11 +124,7 @@ class ResAttentionBlock(nn.Module):
         self.attn_mask = self.build_attention_mask(seq_len)
 
     def attention(self, x: torch.Tensor):
-        self.attn_mask = (
-            self.attn_mask.to(dtype=x.dtype, device=x.device)
-            if self.attn_mask is not None
-            else None
-        )
+        self.attn_mask = self.attn_mask.to(dtype=x.dtype, device=x.device) if self.attn_mask is not None else None
         return self.attn(x, x, x, need_weights=False, attn_mask=self.attn_mask)[0]
 
     def forward(self, x: torch.Tensor):

@@ -26,9 +26,7 @@ class Stopwatch:
         for idx in range(len(self._names) - 1):
             diff = self._lap_times[idx + 1] - self._lap_times[idx]
             percent = (diff / self._total) * 100
-            print(
-                f"{self._names[idx]} to {self._names[idx + 1]}: {diff * 1000:.2f}ms, {percent:.3f}%"
-            )
+            print(f"{self._names[idx]} to {self._names[idx + 1]}: {diff * 1000:.2f}ms, {percent:.3f}%")
 
     def lap(self, name, print_time=False):
         self._lap_times.append(time.perf_counter())
@@ -38,7 +36,5 @@ class Stopwatch:
 
         if print_time:
             percent = (diff / self._total) * 100
-            print(
-                f"{self._names[-2]} to {self._names[-1]}: {diff * 1000:.2f}ms, {percent:.3f}%"
-            )
+            print(f"{self._names[-2]} to {self._names[-1]}: {diff * 1000:.2f}ms, {percent:.3f}%")
         return

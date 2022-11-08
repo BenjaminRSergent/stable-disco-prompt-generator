@@ -31,9 +31,7 @@ class CudaChunk:
 
         start_idx = chunk_idx * self._chunk_size
         with torch.no_grad():
-            self._chunk = self._get_chunk_for_range(
-                start_idx, start_idx + self._chunk_size
-            )
+            self._chunk = self._get_chunk_for_range(start_idx, start_idx + self._chunk_size)
 
     def _get_chunk_for_range(self, start_idx, end_idx):
         return self._data[start_idx : end_idx + self._chunk_size].cuda()
@@ -85,16 +83,10 @@ class MergedDataset(Dataset):
         self._training_set_x = training_files_x
         self._training_set_y = training_files_y
 
-        if (
-            self._training_set_x.get_total_data_num()
-            != self._training_set_y.get_total_data_num()
-        ):
+        if self._training_set_x.get_total_data_num() != self._training_set_y.get_total_data_num():
             raise Exception("Can't merge different length training sets")
 
-        if (
-            self._training_set_x.get_data_per_file()
-            != self._training_set_y.get_data_per_file()
-        ):
+        if self._training_set_x.get_data_per_file() != self._training_set_y.get_data_per_file():
             raise Exception("Can't merge training sets with different data per file")
 
         self._start_idx = start_idx
@@ -203,14 +195,10 @@ class SplitTrainingFiles:
             json.dump(metadata, outfile)
 
     def refresh(self):
-        self._training_data_parts = get_training_data_parts(
-            self._training_dir, self._filename_start
-        )
+        self._training_data_parts = get_training_data_parts(self._training_dir, self._filename_start)
 
     def save_data_at_file_num(self, data, file_idx):
-        path = get_default_path(
-            self._training_dir, f"{self._filename_start}_{file_idx}.pk"
-        )
+        path = get_default_path(self._training_dir, f"{self._filename_start}_{file_idx}.pk")
         if type(data) is list:
             data = torch.stack(tuple(data))
         torch.save(data.cpu(), path)

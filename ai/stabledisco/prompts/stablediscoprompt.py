@@ -6,9 +6,7 @@ from utils import ReTerm
 
 
 class UserPrompt:
-    def __init__(
-        self, prompt: "StableDiscoPrompt", img_url: str, date_str: str, user: str
-    ) -> None:
+    def __init__(self, prompt: "StableDiscoPrompt", img_url: str, date_str: str, user: str) -> None:
         self.prompt = prompt
         self.img_url = img_url
         self.date_str = date_str
@@ -78,13 +76,8 @@ class StableDiscoPrompt:
 
 class ArgSelector:
     def __init__(self, arg_val_cnt, total_prompt_cnt):
-        self._arg_val_freq = {
-            key: val for key, val in arg_val_cnt.items() if key not in {"--h", "--w"}
-        }
-        self._param_freq = {
-            param: sum(val.values()) / total_prompt_cnt
-            for param, val in self._arg_val_freq.items()
-        }
+        self._arg_val_freq = {key: val for key, val in arg_val_cnt.items() if key not in {"--h", "--w"}}
+        self._param_freq = {param: sum(val.values()) / total_prompt_cnt for param, val in self._arg_val_freq.items()}
         for param, vals_cnts in self._arg_val_freq.items():
             total_cnt = sum(vals_cnts.values())
             for param_val in vals_cnts:
@@ -163,9 +156,7 @@ def arg_prompt_split(command):
             prompt += f" {args[idx]}"
             args_to_remove.add(idx)
 
-    key_val_pairs = [
-        pair for idx, pair in enumerate(key_val_pairs) if idx not in args_to_remove
-    ]
+    key_val_pairs = [pair for idx, pair in enumerate(key_val_pairs) if idx not in args_to_remove]
 
     args = {entry[0]: entry[1] for entry in key_val_pairs if len(entry) == 2}
     return prompt, args

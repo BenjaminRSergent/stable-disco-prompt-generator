@@ -36,11 +36,16 @@ class PipelineChunk(torchdata.CudaChunk):
     def _get_chunk_for_range(self, start_idx, end_idx):
         return self._get_chunk_func(start_idx, end_idx)
 
-    def _get_tokens_for_range(self,  start_idx, end_idx):
+    def _get_tokens_for_range(self, start_idx, end_idx):
         return self._data[start_idx:end_idx].cuda()
 
-    def _get_features_for_range(self,  start_idx, end_idx):
-        ret = list(zip(self._data[start_idx:end_idx].cuda(), self._clip_model.encode_text(self._data[start_idx:end_idx].cuda()).half()))
+    def _get_features_for_range(self, start_idx, end_idx):
+        ret = list(
+            zip(
+                self._data[start_idx:end_idx].cuda(),
+                self._clip_model.encode_text(self._data[start_idx:end_idx].cuda()).half(),
+            )
+        )
         print(len(ret))
         return ret
 
@@ -82,17 +87,12 @@ class PipelineChunk(torchdata.CudaChunk):
         if set_if_stage(curr_vals, PipelineStage.TRANSFORMED):
             return get_ret()
 
-        curr_vals = (
-            curr_vals[torch.arange(curr_vals.shape[0]), ends]
-            @ self._clip_model.text_projection
-        )
+        curr_vals = curr_vals[torch.arange(curr_vals.shape[0]), ends] @ self._clip_model.text_projection
 
         if set_if_stage(curr_vals, PipelineStage.TOKEN_LATENT):
             return get_ret()
 
-        raise Exception(
-            f"Did not find input and output vals for stages {self._in_stage} -> {self._out_stage}"
-        )
+        raise Exception(f"Did not find input and output vals for stages {self._in_stage} -> {self._out_stage}")
 
 
 class PipelineDataset(Dataset):
@@ -122,9 +122,7 @@ class PipelineDataset(Dataset):
 
     def _prepare_data(self):
         if self._shuffle:
-            data_idxs = (
-                torch.randperm(self._end_idx - self._start_idx) + self._start_idx
-            )
+            data_idxs = torch.randperm(self._end_idx - self._start_idx) + self._start_idx
         else:
             data_idxs = torch.arange(self._start_idx, self._end_idx)
 
@@ -176,9 +174,7 @@ class DirectTextFeaturesSet(Dataset):
 
     def _prepare_data(self):
         if self._shuffle:
-            self._data_idxs = (
-                torch.randperm(self._end_idx - self._start_idx) + self._start_idx
-            )
+            self._data_idxs = torch.randperm(self._end_idx - self._start_idx) + self._start_idx
         else:
             self._data_idxs = None
 
@@ -190,14 +186,12 @@ class DirectTextFeaturesSet(Dataset):
 
     def __getitem__(self, idx):
         data_idx = self._data_idxs[idx] if self._data_idxs is not None else idx + self._start_idx
-        ret = {
-            "features": self._all_features[data_idx]
-        }
+        ret = {"features": self._all_features[data_idx]}
         if self._all_tokens is not None:
             ret["tokens"] = self._all_tokens[idx]
         if self._all_rev_tokens is not None:
             ret["rev_tokens"] = self._all_rev_tokens[idx]
-            
+
         if idx == self._end_idx - 1:
             self._prepare_data()
 
@@ -220,9 +214,7 @@ class ImgFeaturesToTokensSet(Dataset):
 
     def _prepare_data(self):
         if self._shuffle:
-            data_idxs = (
-                torch.randperm(self._end_idx - self._start_idx) + self._start_idx
-            )
+            data_idxs = torch.randperm(self._end_idx - self._start_idx) + self._start_idx
         else:
             data_idxs = torch.arange(self._start_idx, self._end_idx)
 
@@ -238,9 +230,7 @@ class ImgFeaturesToTokensSet(Dataset):
             PipelineStage.TOKENS,
             chunk_size=128 * 96,
         )
-        self._curr_image_features = torchdata.CudaChunk(
-            self._all_features[data_idxs], chunk_size=128 * 96
-        )
+        self._curr_image_features = torchdata.CudaChunk(self._all_features[data_idxs], chunk_size=128 * 96)
 
     def clear(self):
         self._curr_image_features = None
@@ -252,7 +242,10 @@ class ImgFeaturesToTokensSet(Dataset):
     def __getitem__(self, idx):
         if self._curr_image_features is None:
             self._prepare_data()
-        ret = (self._curr_image_features[idx].to(self._device, non_blocking=True), self._curr_text_tokens[idx].to(self._device, non_blocking=True))
+        ret = (
+            self._curr_image_features[idx].to(self._device, non_blocking=True),
+            self._curr_text_tokens[idx].to(self._device, non_blocking=True),
+        )
         if idx == self._end_idx - 1:
             self.clear()
 
@@ -260,16 +253,14 @@ class ImgFeaturesToTokensSet(Dataset):
 
 
 class TextFeaturesToRatingSet(Dataset):
-    def __init__(
-        self, tokens, ratings, start_idx, end_idx, shuffle=True
-    ):
+    def __init__(self, tokens, ratings, start_idx, end_idx, shuffle=True):
         self._all_ratings = ratings
         # TODO: Change name to all_features
         self._all_tokens = tokens
 
         self._start_idx = start_idx
         self._end_idx = end_idx
-        
+
         self._shuffle = shuffle
         self._data_idxs = None
         self._prepare_data()
@@ -277,9 +268,7 @@ class TextFeaturesToRatingSet(Dataset):
     def _prepare_data(self):
         self.clear()
         if self._shuffle:
-            self._data_idxs = (
-                torch.randperm(self._end_idx - self._start_idx) + self._start_idx
-            )
+            self._data_idxs = torch.randperm(self._end_idx - self._start_idx) + self._start_idx
         else:
             self._data_idxs = torch.arange(self._start_idx, self._end_idx)
 
@@ -299,10 +288,9 @@ class TextFeaturesToRatingSet(Dataset):
 
         return ret
 
+
 class AlteredFeaturesSet(Dataset):
-    def __init__(
-        self, features, start_idx, end_idx, feature_width=768, num_steps=5, shuffle=True, device=None
-    ):
+    def __init__(self, features, start_idx, end_idx, feature_width=768, num_steps=5, shuffle=True, device=None):
         self.all_features = features
 
         self._start_idx = start_idx
@@ -315,19 +303,16 @@ class AlteredFeaturesSet(Dataset):
         if device is None:
             device = torchutils.get_default_device()
         self._device = device
-        
-        self._last_features=None
+
+        self._last_features = None
         self._prepare_data
 
     def _prepare_data(self):
         self.clear()
         if self._shuffle:
-            self._data_idxs = (
-                torch.randperm(self._end_idx - self._start_idx) + self._start_idx
-            )
+            self._data_idxs = torch.randperm(self._end_idx - self._start_idx) + self._start_idx
         else:
             self._data_idxs = torch.arange(self._start_idx, self._end_idx)
-            
 
     def clear(self):
         self._data_idxs = None
@@ -336,35 +321,33 @@ class AlteredFeaturesSet(Dataset):
         shift = torch.randn((768,))
         shift /= shift.norm(dim=-1, keepdim=True)
         min_scale = 0.6
-    
-        scale = (torch.rand((1,))+min_scale) / scale_div 
-        return (scale * shift).view(1, 768) 
-    
+
+        scale = (torch.rand((1,)) + min_scale) / scale_div
+        return (scale * shift).view(1, 768)
+
     def __len__(self):
-        return self._num_steps*(self._end_idx - self._start_idx)
+        return self._num_steps * (self._end_idx - self._start_idx)
 
     def __getitem__(self, idx):
         if self._data_idxs is None:
             self._prepare_data()
-        
+
         with torch.no_grad():
-            #todo cross product
+            # todo cross product
             features = self._get_features_for_idx(idx)
 
-            
             if idx % 50 == 0:
                 scaled_features = features
                 sim = torch.ones(1)
             else:
                 cycle_idx = idx % 10
-                scale_div = 1.5+3*(cycle_idx+1)/10
+                scale_div = 1.5 + 3 * (cycle_idx + 1) / 10
                 scaled_features = features + self._make_rand_shift(scale_div)
                 scaled_features = scaled_features / scaled_features.norm(dim=-1, keepdim=True)
                 sim = sdutils.cosine_sim(features, scaled_features)
-            
-        
+
         ret = (scaled_features.view(-1), sim)
-        if idx//self._num_steps == self._end_idx - 1:
+        if idx // self._num_steps == self._end_idx - 1:
             self.clear()
 
         return ret
@@ -373,7 +356,8 @@ class AlteredFeaturesSet(Dataset):
         actual_idx = self._data_idxs[idx // self._num_steps]
         features = self.all_features[actual_idx].float()
         return (features / features.norm(dim=-1, keepdim=True)).view(-1)
-        
+
+
 def get_pipeline_data_loader(
     text_tokens,
     vit14_clip_model,
@@ -412,6 +396,7 @@ def get_pipeline_data_loader(
     test_data_loader = DataLoader(val_data_set, batch_size=batch_size, shuffle=False)
     return train_data_loader, test_data_loader
 
+
 def get_tokens_to_features(
     features,
     tokens=None,
@@ -425,13 +410,13 @@ def get_tokens_to_features(
     """
     if not isinstance(text_tokens, torch.Tensor):
         text_tokens = torch.tensor(np.array(text_tokens).astype(np.int32))
-        
-    
+
+
     if not isinstance(features, torch.Tensor):
         features = torch.tensor(np.array(features).astype(np.float32))
-    """     
+    """
     training_idx, val_idx = torchutils.get_split_idxs(features.size(0), val_split)
-    
+
     train_data_set = DirectTextFeaturesSet(
         features,
         tokens=tokens,
@@ -444,17 +429,21 @@ def get_tokens_to_features(
         val_data_set = DirectTextFeaturesSet(
             features,
             tokens=tokens,
-            rev_tokens=rev_tokens, 
+            rev_tokens=rev_tokens,
             start_idx=val_idx[0],
             end_idx=val_idx[1],
             shuffle=shuffle,
         )
     else:
         val_data_set = None
-        
+
     print("Data Loaders")
-    train_data_loader = DataLoader(train_data_set, batch_size=batch_size, shuffle=False, pin_memory=pin_memory, num_workers=num_workers)
-    test_data_loader = DataLoader(val_data_set, batch_size=batch_size, shuffle=False, pin_memory=pin_memory, num_workers=num_workers)
+    train_data_loader = DataLoader(
+        train_data_set, batch_size=batch_size, shuffle=False, pin_memory=pin_memory, num_workers=num_workers
+    )
+    test_data_loader = DataLoader(
+        val_data_set, batch_size=batch_size, shuffle=False, pin_memory=pin_memory, num_workers=num_workers
+    )
     return train_data_loader, test_data_loader
 
 
@@ -473,16 +462,17 @@ def get_feature_to_rating_data_loader(
 
     training_idx, val_idx = torchutils.get_split_idxs(features.size(0), val_split)
 
-    train_data_set = TextFeaturesToRatingSet(
-        features, ratings, *training_idx
-    )
-    val_data_set = TextFeaturesToRatingSet(
-        features, ratings, *val_idx
-    )
+    train_data_set = TextFeaturesToRatingSet(features, ratings, *training_idx)
+    val_data_set = TextFeaturesToRatingSet(features, ratings, *val_idx)
 
-    train_data_loader = DataLoader(train_data_set, batch_size=batch_size, shuffle=False, pin_memory=pin_memory, num_workers=num_workers)
-    test_data_loader = DataLoader(val_data_set, batch_size=batch_size, shuffle=False, pin_memory=pin_memory, num_workers=num_workers)
+    train_data_loader = DataLoader(
+        train_data_set, batch_size=batch_size, shuffle=False, pin_memory=pin_memory, num_workers=num_workers
+    )
+    test_data_loader = DataLoader(
+        val_data_set, batch_size=batch_size, shuffle=False, pin_memory=pin_memory, num_workers=num_workers
+    )
     return train_data_loader, test_data_loader
+
 
 def get_altered_feature_data_loader(
     features,
@@ -496,13 +486,13 @@ def get_altered_feature_data_loader(
         features = torch.tensor(np.array(features).astype(np.float32))
     training_idx, val_idx = torchutils.get_split_idxs(features.size(0), val_split)
 
-    train_data_set = AlteredFeaturesSet(
-        features, *training_idx
-    )
-    val_data_set = AlteredFeaturesSet(
-        features, *val_idx
-    )
+    train_data_set = AlteredFeaturesSet(features, *training_idx)
+    val_data_set = AlteredFeaturesSet(features, *val_idx)
 
-    train_data_loader = DataLoader(train_data_set, batch_size=batch_size, shuffle=False, pin_memory=pin_memory, num_workers=num_workers)
-    test_data_loader = DataLoader(val_data_set, batch_size=batch_size, shuffle=False, pin_memory=pin_memory, num_workers=val_workers)
+    train_data_loader = DataLoader(
+        train_data_set, batch_size=batch_size, shuffle=False, pin_memory=pin_memory, num_workers=num_workers
+    )
+    test_data_loader = DataLoader(
+        val_data_set, batch_size=batch_size, shuffle=False, pin_memory=pin_memory, num_workers=val_workers
+    )
     return train_data_loader, test_data_loader

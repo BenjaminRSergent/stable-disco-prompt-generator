@@ -12,7 +12,7 @@ from utils import get_default_path
 
 
 class BaseModel(nn.Module):
-    def __init__(self, name: str, device = None):
+    def __init__(self, name: str, device=None):
         super().__init__()
         self._name = name
         self._loss_func = None
@@ -98,7 +98,7 @@ class BaseModel(nn.Module):
 
     def get_save_dir(self):
         return get_checkpoint_dir(self._name)
-        
+
     def get_name(self) -> str:
         return self._name
 
@@ -106,11 +106,14 @@ class BaseModel(nn.Module):
 def save_model(model, model_name, ckpt_name, **kwargs):
     return torch.save(model, get_checkpoint_path(model_name, ckpt_name), **kwargs)
 
+
 def load_model(model_name, ckpt_name, **kwargs):
     return torch.load(get_checkpoint_path(model_name, ckpt_name), **kwargs)
 
+
 def get_checkpoint_dir(model_name):
     return get_default_path(f"model/{model_name}")
+
 
 def get_checkpoint_path(model_name, ckpt_name):
     checkpoint_dir = get_checkpoint_dir(model_name)

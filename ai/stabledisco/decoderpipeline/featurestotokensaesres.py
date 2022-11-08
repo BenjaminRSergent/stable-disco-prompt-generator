@@ -5,15 +5,15 @@ import ai.torchmodules.layers as torchlayers
 import ai.torchmodules.scheduler as torchscheduler
 import torch
 import torch.nn as nn
-from ai.stabledisco.decoderpipeline.lowerfeaturelayers import \
-    LowerFeatureLayers
 from clip.clip import _tokenizer as clip_tokenizer
 
 _eot_token = clip_tokenizer.encoder["<|endoftext|>"]
 
 
 class FeaturesToTokensAesResModel(torchmodules.BaseModel):
-    def __init__(self, clip_model, transformer_width=768, seq_len = 77, vocab_size=49408, heads=12, layers=12, device=None):
+    def __init__(
+        self, clip_model, transformer_width=768, seq_len=77, vocab_size=49408, heads=12, layers=12, device=None
+    ):
         super().__init__("FeaturesToTokensAesResModelV1", device=device)
 
         self._ascii_mask = None
@@ -22,7 +22,7 @@ class FeaturesToTokensAesResModel(torchmodules.BaseModel):
         self._transformer_width = transformer_width
         self._transformer_heads = heads
         self._transformer_layers = layers
-        
+
         self._token_embedding = nn.Embedding(vocab_size, transformer_width)
         self._embedding_dropout = nn.Dropout(0.15)
         self._positional_embedding = clip_model.positional_embedding
@@ -31,19 +31,24 @@ class FeaturesToTokensAesResModel(torchmodules.BaseModel):
         self._vocab_size = vocab_size
 
         self._seq_expander = torchlayers.LinearWithActivation(
-             self._transformer_width,
+            self._transformer_width,
             self._seq_len * transformer_width,
             dropout=0.1,
             activation=torchlayers.QuickGELU,
             batch_norm_type=None,
         )
 
-        self._seq_reshaper = torchmodules.layers.Reshaper(
-            (-1, self._seq_len, transformer_width)
-        )
-        
+        self._seq_reshaper = torchmodules.layers.Reshaper((-1, self._seq_len, transformer_width))
+
         self._pre_encode_ln = nn.LayerNorm(transformer_width)
-        self._res_block = torchlayers.ResDenseStack(transformer_width, transformer_width*2, layers=4, activation=torchlayers.QuickGELU, dropout=0.1, batch_norm_type=torchlayers.Normalization.NormType.LAYER)
+        self._res_block = torchlayers.ResDenseStack(
+            transformer_width,
+            transformer_width * 2,
+            layers=4,
+            activation=torchlayers.QuickGELU,
+            dropout=0.1,
+            batch_norm_type=torchlayers.Normalization.NormType.LAYER,
+        )
 
         block_width = transformer_width * 4
         self._encoder = nn.TransformerEncoder(
@@ -68,7 +73,7 @@ class FeaturesToTokensAesResModel(torchmodules.BaseModel):
                 dropout=0.075,
                 batch_first=True,
             ),
-            num_layers=3*self._transformer_layers,
+            num_layers=3 * self._transformer_layers,
         )
 
         self._vocab_out = torch.nn.Linear(transformer_width, self._vocab_size)
@@ -77,47 +82,36 @@ class FeaturesToTokensAesResModel(torchmodules.BaseModel):
         self._loss_func = nn.CrossEntropyLoss(ignore_index=0)
 
         base_learning = 1e-3
-        self._optimizer = torch.optim.NAdam(
-            self.parameters(), base_learning, betas=(0.89, 0.998)
+        self._optimizer = torch.optim.NAdam(self.parameters(), base_learning, betas=(0.89, 0.998))
+
+        self._scheduler = torchscheduler.make_cyclic_with_warmup(
+            optimizer=self._optimizer,
+            epoch_batches=116734,
+            max_lr=base_learning,
+            min_lr_divisor=10,
+            step_size_up_epoch_mul=0.5,
+            warmup_period_epoch_mul=0.25,
+            gamma=0.75,
+            cycle_momentum=False,
         )
 
-        self._scheduler = torchscheduler.make_cyclic_with_warmup(optimizer=self._optimizer,
-                                                                 epoch_batches=116734,
-                                                                 max_lr=base_learning,
-                                                                 min_lr_divisor=10,
-                                                                 step_size_up_epoch_mul=0.5,
-                                                                 warmup_period_epoch_mul=0.25,
-                                                                 gamma=0.75,
-                                                                 cycle_momentum=False)
-
-        target_mask = nn.Transformer.generate_square_subsequent_mask(
-            self._seq_len
-        ).cuda()
+        target_mask = nn.Transformer.generate_square_subsequent_mask(self._seq_len).cuda()
         self.register_buffer("_target_mask", target_mask)
 
     def _calc_batch_loss(self, x_inputs: torch.Tensor, y_targets: torch.Tensor):
         with torch.autocast(device_type="cuda"):
             outputs = self((x_inputs, y_targets))
             if y_targets.dtype.is_floating_point:
-                return self._loss_func(
-                outputs.permute(0, 2, 1), y_targets
-                )
+                return self._loss_func(outputs.permute(0, 2, 1), y_targets)
             else:
-                return self._loss_func(
-                    outputs.permute(0, 2, 1)[:, :, :-1], y_targets[:, 1:].long()
-                )
+                return self._loss_func(outputs.permute(0, 2, 1)[:, :, :-1], y_targets[:, 1:].long())
 
     def forward(self, x_inputs):
         latent_img_features, tgt_tokens = x_inputs
-        latent_img_features = latent_img_features / latent_img_features.norm(
-            dim=-1, keepdim=True
-        )
+        latent_img_features = latent_img_features / latent_img_features.norm(dim=-1, keepdim=True)
         encoder_out = self.features_to_memory(latent_img_features)
 
-        tgt = (
-            self._embedding_dropout(self._token_embedding(tgt_tokens))
-            + self._positional_embedding
-        )
+        tgt = self._embedding_dropout(self._token_embedding(tgt_tokens)) + self._positional_embedding
 
         decoder_out = self._decoder(
             memory=encoder_out,
@@ -144,9 +138,7 @@ class FeaturesToTokensAesResModel(torchmodules.BaseModel):
 
     def generate_square_subsequent_mask(self, size):
         attn_shape = (1, size, size)
-        subsequent_mask = torch.triu(
-            torch.ones(attn_shape, device=self._device), diagonal=1
-        )
+        subsequent_mask = torch.triu(torch.ones(attn_shape, device=self._device), diagonal=1)
         return subsequent_mask == 0
 
     def decode(self, tokens):
@@ -197,10 +189,9 @@ class FeaturesToTokensAesResModel(torchmodules.BaseModel):
         else:
             print("Asked for non-ascii!")
             raise Exception()
-        
+
         probs[:, -1] = 0
         probs[:, -2] = 0
-
 
         return probs
 
@@ -208,7 +199,7 @@ class FeaturesToTokensAesResModel(torchmodules.BaseModel):
         if self._ascii_mask is None:
             print("\n\n\n\n\n\n\n")
             self._ascii_mask = torch.ones(len(clip_tokenizer.encoder), device="cuda")
-            
+
             r"""
             norm_char_regex = re.compile(
                 r"^[a-zA-Z0-9 ,\.!\"\'\?():;_-{|}<=>]*$"
@@ -221,14 +212,12 @@ class FeaturesToTokensAesResModel(torchmodules.BaseModel):
                 r"^[a-zA-Z0-9 !\"#$%&'()*+,\-./:;<=>?@[\]^_`{|}~\\]*$"
             )
             """
-            norm_char_regex = re.compile(
-                r"^[a-zA-Z0-9#\$=+%@\^ ,\.!\"\'\?():;_-{|}<=>]*$"
-            )
+            norm_char_regex = re.compile(r"^[a-zA-Z0-9#\$=+%@\^ ,\.!\"\'\?():;_-{|}<=>]*$")
             num_ascii = 0
             for token in clip_tokenizer.decoder.keys():
                 text = clip_tokenizer.decode([token])
-                #is_ascii = norm_char_regex.match(text) and text[-1] == ' '
-                is_ascii = ' ' in text[-1] and (norm_char_regex.match(text) is not None)
+                # is_ascii = norm_char_regex.match(text) and text[-1] == ' '
+                is_ascii = " " in text[-1] and (norm_char_regex.match(text) is not None)
 
                 if is_ascii:
                     num_ascii += 1

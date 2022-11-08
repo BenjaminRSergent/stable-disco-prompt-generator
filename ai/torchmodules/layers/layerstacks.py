@@ -1,19 +1,17 @@
 import torch.nn as nn
-from ai.torchmodules.layers.basiclayers import (LinearWithActivation,
-                                                Normalization, QuickGELU,
-                                                ResLinear)
+from ai.torchmodules.layers.basiclayers import LinearWithActivation, Normalization, QuickGELU, ResLinear
 
 
 class ReducingResDenseStack(nn.Module):
     def __init__(
         self,
         input_size,
-        num_res_blocks = 4,
-        res_unit_mul = 8,
-        res_layers = 8,
-        units_div = 2,
-        dropout_div = 2,
-        start_dropout = 0.1,
+        num_res_blocks=4,
+        res_unit_mul=8,
+        res_layers=8,
+        units_div=2,
+        dropout_div=2,
+        start_dropout=0.1,
         batch_norm_type=Normalization.NormType.BATCH,
         activation=QuickGELU,
     ) -> None:
@@ -24,30 +22,36 @@ class ReducingResDenseStack(nn.Module):
         curr_dropout = start_dropout
         prev_width = curr_width
         for _ in range(num_res_blocks):
-            block = ResDenseStack(curr_width, int(curr_width*res_unit_mul), layers=res_layers, activation=activation, dropout=curr_dropout, batch_norm_type=batch_norm_type)
+            block = ResDenseStack(
+                curr_width,
+                int(curr_width * res_unit_mul),
+                layers=res_layers,
+                activation=activation,
+                dropout=curr_dropout,
+                batch_norm_type=batch_norm_type,
+            )
             self._resblocks.append(block)
-            
+
             prev_width = curr_width
             curr_width //= units_div
-            
+
             reducer = LinearWithActivation(
                 prev_width,
                 curr_width,
                 dropout=curr_dropout,
                 batch_norm_type=None,
             )
-            
+
             self._resblocks.append(reducer)
-            
+
             curr_dropout /= dropout_div
-            
-        
 
         self.in_features = input_size
         self.out_features = curr_width
 
     def forward(self, x_inputs):
         return self._resblocks(x_inputs)
+
 
 class ResDenseStack(nn.Module):
     def __init__(
@@ -60,7 +64,7 @@ class ResDenseStack(nn.Module):
         dropout=0.2,
     ) -> None:
         super().__init__()
-        
+
         self.in_features = input_size
         self.out_features = input_size
 
@@ -86,6 +90,7 @@ class ResDenseStack(nn.Module):
     def forward(self, x_inputs):
         return self.resblocks(x_inputs)
 
+
 class MixedResDenseStack(nn.Module):
     def __init__(
         self,
@@ -100,7 +105,7 @@ class MixedResDenseStack(nn.Module):
 
         if type(units_list) is int:
             units_list = [(1, units_list)]
-            
+
         num_layers = len(units_list)
 
         self.in_features = input_size
@@ -121,8 +126,7 @@ class MixedResDenseStack(nn.Module):
                         dropout=dropout,
                     )
                 )
-                
-        
+
         proj_std = (input_size**-0.5) * ((2 * num_layers) ** -0.5)
         fc_std = (2 * input_size) ** -0.5
         for block in self._layers:
@@ -135,6 +139,7 @@ class MixedResDenseStack(nn.Module):
             curr_data = layer(curr_data)
 
         return curr_data
+
 
 class DenseStack(nn.Module):
     def __init__(

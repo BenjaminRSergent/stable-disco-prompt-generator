@@ -26,7 +26,7 @@ class TorchTrainer:
         max_epochs=100,
         num_to_acc=1,
         print_every=1000,
-        print_learning_rate=False
+        print_learning_rate=False,
     ) -> float:
         new_best_val_loss = best_validation
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -34,7 +34,6 @@ class TorchTrainer:
             out_dir = model.get_save_dir()
 
         since_improvement = 0
-
 
         print("Starting training")
         for epoch in range(max_epochs):
@@ -51,9 +50,7 @@ class TorchTrainer:
                 training_loader.dataset.clear()
             torchutils.torch_garbage_collect()
 
-            model_path = get_default_path(
-                model.get_save_dir(), f"{timestamp}_epoch_{epoch}_tmp"
-            )
+            model_path = get_default_path(model.get_save_dir(), f"{timestamp}_epoch_{epoch}_tmp")
             torch.save(model.state_dict(), model_path)
 
             print("Calcing val loss")
@@ -69,9 +66,7 @@ class TorchTrainer:
                 print("Model improved, saving")
                 since_improvement = 0
                 new_best_val_loss = val_loss
-                model_path = get_default_path(
-                    model.get_save_dir(), f"{timestamp}_epoch_{epoch}"
-                )
+                model_path = get_default_path(model.get_save_dir(), f"{timestamp}_epoch_{epoch}")
                 torch.save(model.state_dict(), model_path)
             else:
                 since_improvement += 1
@@ -88,7 +83,7 @@ class TorchTrainer:
         num_to_acc: int,
         print_every: int,
         print_learning_rate=False,
-        clip_val=0.5
+        clip_val=0.5,
     ):
         total_loss = 0
         running_loss = 0
@@ -101,7 +96,6 @@ class TorchTrainer:
 
         device = model.get_device()
         for idx, data in enumerate(data_loader):
-            
 
             with torch.autocast(device_type="cuda"):
                 if issubclass(type(data), dict):
@@ -126,7 +120,7 @@ class TorchTrainer:
             total_loss += loss.item() * num_to_acc
             running_loss += loss.item() * num_to_acc
 
-            if (idx+1) % print_every == 0:
+            if (idx + 1) % print_every == 0:
                 sec_per_batch = (time.perf_counter() - start_time) / print_every
                 batch_per_sec = 1 / sec_per_batch
                 rem_time = sec_per_batch * (len(data_loader) - idx)
@@ -143,6 +137,5 @@ class TorchTrainer:
 
                 running_loss = 0
                 start_time = time.perf_counter()
-
 
         return total_loss / idx

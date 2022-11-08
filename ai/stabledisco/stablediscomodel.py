@@ -12,16 +12,12 @@ class StableDiscoModel:
     def __init__(self, model: torch.nn.Module) -> None:
         self._model = model
 
-    def reconstruct_ddim(
-        self, samples_ddim: torch.tensor
-    ) -> typing.List[PIL.Image.Image]:
+    def reconstruct_ddim(self, samples_ddim: torch.tensor) -> typing.List[PIL.Image.Image]:
         ret = []
         x_samples_ddim = self._model.decode_first_stage(samples_ddim)
         x_samples_ddim = torch.clamp((x_samples_ddim + 1.0) / 2.0, min=0.0, max=1.0)
         for x_sample in x_samples_ddim:
-            x_sample = 255.0 * einops.rearrange(
-                x_sample.cpu().numpy(), "c h w -> h w c"
-            )
+            x_sample = 255.0 * einops.rearrange(x_sample.cpu().numpy(), "c h w -> h w c")
             ret.append(PIL.Image.fromarray(x_sample.astype(np.uint8)))
         return ret
 
@@ -34,14 +30,10 @@ class StableDiscoModel:
     def ema_scope(self):
         return self._model.ema_scope()
 
-    def get_image_init_latent(
-        self, image: PIL.Image.Image, batch_size=1
-    ) -> torch.Tensor:
+    def get_image_init_latent(self, image: PIL.Image.Image, batch_size=1) -> torch.Tensor:
         image = self.preprocess_image(image).to(self._model.device)
         init_image = einops.repeat(image, "1 ... -> b ...", b=batch_size)
-        return self._model.get_first_stage_encoding(
-            self._model.encode_first_stage(init_image)
-        )  # move to latent space
+        return self._model.get_first_stage_encoding(self._model.encode_first_stage(init_image))  # move to latent space
 
     def get_learned_conditioning(self, text: str) -> torch.Tensor:
         return self._model.get_learned_conditioning(text)

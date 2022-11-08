@@ -11,9 +11,7 @@ def generate_square_subsequent_mask(size: int, device=None) -> torch.Tensor:
     if device is None:
         device = get_default_device()
 
-    mask = (
-        torch.triu(torch.ones(size, size, device=device, dtype=torch.float)) == 1
-    ).transpose(0, 1)
+    mask = (torch.triu(torch.ones(size, size, device=device, dtype=torch.float)) == 1).transpose(0, 1)
     return mask.masked_fill(mask == 0, float("-inf")).masked_fill(mask == 1, float(0.0))
 
 
@@ -34,6 +32,7 @@ def unravel_torch_idx(idx, cols, device=None):
     idx_one = torch.div(idx, cols, rounding_mode="trunc")
     idx_two = torch.remainder(idx, cols)
     return torch.stack((idx_one, idx_two), dim=1).long()
+
 
 def refresh_cuda_memory():
     """
@@ -61,6 +60,7 @@ def refresh_cuda_memory():
         tensor.data = tensor.to(device)
         if isinstance(tensor, torch.nn.Parameter) and tensor.grad is not None:
             tensor.grad.data = tensor.grad.to(device)
+
 
 def dict_to_device(data, device=None):
     if device is None:

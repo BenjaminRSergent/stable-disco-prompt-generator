@@ -32,9 +32,7 @@ class EncodedText:
         return self
 
     @classmethod
-    def from_text_list(
-        cls, text_lst: typing.List[str], ignore_long=False, cuda=True
-    ) -> typing.List["EncodedText"]:
+    def from_text_list(cls, text_lst: typing.List[str], ignore_long=False, cuda=True) -> typing.List["EncodedText"]:
         if type(text_lst) != list:
             text_lst = [text_lst]
         ret = [cls.from_text(x, ignore_long, cuda) for x in text_lst]

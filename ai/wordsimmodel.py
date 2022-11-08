@@ -19,9 +19,7 @@ class WordSimModel:
                 for sentence in self._sentences:
                     yield WordSimModel.process_sentence(sentence)
 
-        self._gem_model = gensim.models.Word2Vec(
-            MJCorpus(corpus_strs), window=3, vector_size=300
-        )
+        self._gem_model = gensim.models.Word2Vec(MJCorpus(corpus_strs), window=3, vector_size=300)
 
     def replace_words(
         self,
@@ -53,11 +51,7 @@ class WordSimModel:
                 to_replace_ceil = int(max_percent_replace * len(curr_sentence))
                 to_replace_cnt = random.randint(1, to_replace_ceil)
                 split_sentence = sentence.split(" ")
-                all_idx = [
-                    idx
-                    for idx in range(len(split_sentence))
-                    if split_sentence[idx] not in protected
-                ]
+                all_idx = [idx for idx in range(len(split_sentence)) if split_sentence[idx] not in protected]
                 np.random.shuffle(all_idx)
                 to_replace = all_idx[:to_replace_cnt]
                 replacement_words = []
@@ -83,9 +77,7 @@ class WordSimModel:
                         split_sentence[idx] = word
                         sentences_set.add(" ".join(split_sentence))
 
-            sorted_sentences, predictions = rnn_model.sort_command_strs(
-                list(sentences_set)
-            )
+            sorted_sentences, predictions = rnn_model.sort_command_strs(list(sentences_set))
             curr_sentence, prediction = sorted_sentences[0], predictions[0]
 
             if verbose:
@@ -133,9 +125,7 @@ class WordSimModel:
 
             # TODO
             try:
-                sentences += self.drop_words(
-                    curr_sentence, num_to_drop, protected_words=protected
-                )
+                sentences += self.drop_words(curr_sentence, num_to_drop, protected_words=protected)
             except Exception:
                 pass
             try:
@@ -155,24 +145,15 @@ class WordSimModel:
 
             insertion_idx = random.randint(0, len(split_sentence) - 1)
 
-            end_insertion_check = (
-                insertion_idx - 1 if insertion_idx != 0 else len(split_sentence) - 1
-            )
+            end_insertion_check = insertion_idx - 1 if insertion_idx != 0 else len(split_sentence) - 1
             variants = self.get_words_to_variants(sentence, *args, **kwargs)
-            while (
-                split_sentence[insertion_idx] not in variants
-                and insertion_idx != end_insertion_check
-            ):
+            while split_sentence[insertion_idx] not in variants and insertion_idx != end_insertion_check:
                 insertion_idx = (insertion_idx + 1) % len(split_sentence)
 
             sub_words, sub_probs = list(zip(*variants[split_sentence[insertion_idx]]))
             sub_probs /= np.sum(sub_probs)
             replacement = np.random.choice(sub_words, p=sub_probs)
-            split_sentence = (
-                split_sentence[:insertion_idx]
-                + [replacement]
-                + split_sentence[insertion_idx:]
-            )
+            split_sentence = split_sentence[:insertion_idx] + [replacement] + split_sentence[insertion_idx:]
             changed_sentences.append(" ".join(split_sentence))
 
         return changed_sentences
@@ -208,33 +189,21 @@ class WordSimModel:
     def predict_output_word(self, *args, **kwargs):
         return self._gem_model.predict_output_word(*args, **kwargs)
 
-    def get_weighted_random_replacement(
-        self, word, banned: List[str] = None, *args, **kwargs
-    ):
+    def get_weighted_random_replacement(self, word, banned: List[str] = None, *args, **kwargs):
         if banned is None:
             banned = []
-        variants = [
-            word
-            for word in self.most_similar(word, *args, **kwargs)
-            if word not in banned
-        ]
+        variants = [word for word in self.most_similar(word, *args, **kwargs) if word not in banned]
         sub_words, sub_probs = list(zip(*variants))
         sub_probs /= np.sum(sub_probs)
         return np.random.choice(sub_words, p=sub_probs)
 
-    def get_weighted_random_replacement_match(
-        self, sentence_words, idx, banned: List[str] = None
-    ):
+    def get_weighted_random_replacement_match(self, sentence_words, idx, banned: List[str] = None):
         # TODO: Change sentencewords to imply tuples
-        sub_words, sub_probs = self.get_weighted_random_replacement_options(
-            tuple(sentence_words), idx, tuple(banned)
-        )
+        sub_words, sub_probs = self.get_weighted_random_replacement_options(tuple(sentence_words), idx, tuple(banned))
         return np.random.choice(sub_words)
 
     @lru_cache(maxsize=2048)
-    def get_weighted_random_replacement_options(
-        self, sentence_words, idx, banned: Tuple[str] = None
-    ):
+    def get_weighted_random_replacement_options(self, sentence_words, idx, banned: Tuple[str] = None):
         if banned is None:
             banned = []
         sentence_words = list(sentence_words)
@@ -242,11 +211,7 @@ class WordSimModel:
         orig_parts = get_parts(sentence)
         word = sentence_words[idx]
         word_vars = self.most_similar(word)
-        variants = [
-            (replacement, sim)
-            for replacement, sim in word_vars
-            if replacement not in banned
-        ]
+        variants = [(replacement, sim) for replacement, sim in word_vars if replacement not in banned]
 
         sub_words = []
         sub_probs = []
@@ -286,9 +251,7 @@ class WordSimModel:
                         threshold = cuttoff
                         break
 
-                subs = self.most_similar(
-                    word, *args, base_threshold=threshold, **kwargs
-                )
+                subs = self.most_similar(word, *args, base_threshold=threshold, **kwargs)
                 if subs:
                     words_to_varients[word] = subs
             except Exception:
@@ -299,9 +262,7 @@ class WordSimModel:
     def most_similar(self, word, *args, base_threshold=0.0, **kwargs):
         # TODO: Cuttofs
         return [
-            (sub, sim)
-            for sub, sim in self._gem_model.wv.most_similar(word, *args, **kwargs)
-            if sim > base_threshold
+            (sub, sim) for sub, sim in self._gem_model.wv.most_similar(word, *args, **kwargs) if sim > base_threshold
         ]
 
     def similarity(self, word_a, word_b):
