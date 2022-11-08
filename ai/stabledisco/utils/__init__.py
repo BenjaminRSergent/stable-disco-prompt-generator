@@ -22,6 +22,7 @@ from ai.stabledisco.utils.mathutils import (
     project_to_axis,
     random_scalar_norm,
     remove_projection,
+    project_to_basis,
     round_to_multiple,
 )
 from ai.stabledisco.utils.modelutils import load_clip_model, load_default_sd_model, load_sd_model_from_config
