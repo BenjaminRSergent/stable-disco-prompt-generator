@@ -324,12 +324,10 @@ class BeamSearcher:
             upgrade_config = UpgradeConfig()
         self._upgrade_config = upgrade_config
 
-        upgrader_config = decoderpipeline.PromptUpgraderConfig(
-            rating_weight=self._upgrade_config.rating_weight, verbose=True
-        )
-        self._upgrader = decoderpipeline.PromptUpgrader(
-            self._tokens_model, clip_model, self._ratings_model, config=upgrader_config
-        )
+        upgrader_factory = decoderpipeline.PromptUpgraderFactory(self._tokens_model, clip_model, self._ratings_model)
+        upgrader_factory.rating_weight(self._search_config.rating_weight)
+        upgrader_factory.target_rating(0).target_sim(self._search_config.target_sim)
+        self._upgrader = upgrader_factory.verbose(self._upgrade_config.verbose).build()
 
     def beam_search(self, features, max_len=75, topk=1, start_tokens=None, print_freq=1):
 

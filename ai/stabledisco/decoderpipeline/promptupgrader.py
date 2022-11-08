@@ -1,3 +1,4 @@
+import copy
 import random
 
 import ai.stabledisco.constants as sdconsts
@@ -13,6 +14,99 @@ half_tokens_cnt = all_tokens_cnt // 2
 quarter_tokens_cnt = half_tokens_cnt // 2
 
 
+class PromptUpgraderFactory:
+    def __init__(self, to_token_model, to_rating_model, clip_model):
+        self._config = PromptUpgraderConfig()
+        self._to_token_model = to_token_model
+        self._to_rating_model = to_rating_model
+        self._clip_model = clip_model
+
+    def build(self):
+        self._validate()
+        return PromptUpgrader(
+            self._to_token_model,
+            self._to_rating_model,
+            self._clip_model,
+            config=copy.deepcopy(self._config),
+        )
+
+    def _validate(self):
+        if self._to_token_model is None:
+            raise Exception("Tokens model not set")
+        if self._to_rating_model is None:
+            raise Exception("Ratings model not set")
+        if self._clip_model is None:
+            raise Exception("Clip model not set")
+
+    def max_cands(self, max_cands):
+        self._config.max_cands = max_cands
+        return self
+
+    def cand_mul(self, cand_mul):
+        self._config.cand_mul = cand_mul
+        return self
+
+    def rating_weight(self, rating_weight):
+        self._config.rating_weight = rating_weight
+        return self
+
+    def max_token_removal(self, max_token_removal):
+        self._config.max_token_removal = max_token_removal
+        return self
+
+    def removal_sim_thresh(self, removal_sim_thresh):
+        self._config.removal_sim_thresh = removal_sim_thresh
+        return self
+
+    def calculator(self, calculator):
+        self._config.calculator = calculator
+        return self
+
+    def improve_eps(self, improve_eps):
+        self._config.improve_eps = improve_eps
+        return self
+
+    def num_insert_checks(self, num_insert_checks):
+        self._config.num_insert_checks = num_insert_checks
+        return self
+
+    def quick_pass_cands(self, quick_pass_cands):
+        self._config.quick_pass_cands = quick_pass_cands
+        return self
+
+    def max_iters(self, max_iters):
+        self._config.max_iters = max_iters
+        return self
+
+    def add_first(self, add_first):
+        self._config.add_first = add_first
+        return self
+
+    def do_large_cap_pass(self, do_large_cap_pass):
+        self._config.do_large_cap_pass = do_large_cap_pass
+        return self
+
+    def ascii_only(self, ascii_only):
+        self._config.ascii_only = ascii_only
+        return self
+
+    def no_banned(self, no_banned):
+        self._config.no_banned = no_banned
+        return self
+
+    def verbose(self, verbose):
+        self._config.verbose = verbose
+        return self
+
+    def target_rating(self, target_rating):
+        self._config.target_rating = target_rating
+        return self
+
+    def target_sim(self, target_sim):
+        self._config.target_sim = target_sim
+        return self
+
+
 class PromptUpgraderConfig:
     # Default values are based on a bayesian optimization parameter search
     def __init__(
@@ -20,6 +114,7 @@ class PromptUpgraderConfig:
         max_cands=5000,
         cand_mul=2,
         max_iters=15,
+        insert_cands=1024 * 2,
         rating_weight=1.0,
         max_token_removal=5,
         removal_sim_thresh=0.1,
@@ -27,34 +122,39 @@ class PromptUpgraderConfig:
         improve_eps=1e-7,
         num_insert_checks=20,
         quick_pass_cands=None,
+        target_rating=10.0,
+        target_sim=1.0,
         add_first=True,
         do_large_cap_pass=True,
         ascii_only=True,
         no_banned=True,
         verbose=True,
-        target_rating=10.0,
-        target_sim=1.0,
     ):
         if quick_pass_cands is None:
             quick_pass_cands = [32, 32, 64, 64, 128, 128, 256]
 
         self.max_cands = max_cands
         self.cand_mul = cand_mul
+        self.max_iters = max_iters
+        self.insert_cands = insert_cands
+        self.num_insert_checks = num_insert_checks
+        self.quick_pass_cands = quick_pass_cands
+
         self.rating_weight = rating_weight
         self.max_token_removal = max_token_removal
         self.removal_sim_thresh = removal_sim_thresh
+
         self.calculator = calculator
         self.improve_eps = improve_eps
-        self.num_insert_checks = num_insert_checks
-        self.quick_pass_cands = quick_pass_cands
-        self.max_iters = max_iters
+
+        self.target_rating = target_rating
+        self.target_sim = target_sim
+
         self.add_first = add_first
         self.do_large_cap_pass = do_large_cap_pass
         self.ascii_only = ascii_only
         self.no_banned = no_banned
         self.verbose = verbose
-        self.target_rating = target_rating
-        self.target_sim = target_sim
 
 
 class PromptUpgrader:
@@ -174,8 +274,8 @@ class PromptUpgrader:
     def __init__(
         self,
         tokens_model: torch.nn.Module,
-        clip_model: ClipModel,
         rating_model: torch.nn.Module,
+        clip_model: ClipModel,
         config: PromptUpgraderConfig = None,
     ):
         self._tokens_model = tokens_model
@@ -224,9 +324,9 @@ class PromptUpgrader:
             max_tokens = min(sdconsts.prompt_token_len, max_tokens)
 
             self._init_upgrade_pass(state, min_cands, max_cands, max_tokens)
-            if not self._has_hit_target():
+            if not self._has_hit_target(state):
                 self._core_upgrade_pass(state, min_cands, max_cands, max_tokens)
-            if not self._has_hit_target():
+            if not self._has_hit_target(state):
                 self._final_upgrade_pass(state, min_cands, max_cands, max_tokens)
 
             return state.get_best(True)
@@ -371,7 +471,6 @@ class PromptUpgrader:
         prompt=None,
         state=None,
     ):
-
         con_failed = 0
         max_con_failed = 5
 
@@ -392,9 +491,9 @@ class PromptUpgrader:
                     insert_cand_alpha = min((state.get_end_idx())/self._config.num_insert_checks, 1)
                     insert_cands = insert_cand_alpha*min_insert_cands + (1-insert_cand_alpha)*max_insert_cands
                     """
-                    insert_cands = int(1024 * 2 / num_checks)
+                    curr_cands = int(self._config.insert_cands / num_checks)
                     old_best_score = state.get_best_score()
-                    self._insert_token(state, num_cands=int(insert_cands))
+                    self._insert_token(state, num_cands=int(curr_cands))
                     self.replace_tokens(quick_pass_cands, state=state)
 
                     self._verbose_print(f"Added token, {rem_tokens-num_added} remain")
@@ -600,6 +699,8 @@ class PromptUpgrader:
         top_features = self._clip_model.features_from_tokens(state.get_best_tokens(), verbosity=0)
         top_sim = self._clip_model.cosine_similarity(state.target_features, top_features)[0]
         top_rating = self._rating_model(top_features)[0].item()
+
+        print(top_sim, self._config.target_sim, top_rating, self._config.target_rating)
 
         return top_sim >= self._config.target_sim and top_rating >= self._config.target_rating
 
