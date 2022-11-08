@@ -225,20 +225,26 @@ class PromptUpgrader:
             if self._config.add_first:
                 self.add_tokens(pass_cands=min_cands, max_tokens=(max_tokens + end_idx) / 2 - 2, state=state)
 
-            for cands in self._config.quick_pass_cands:
-                self.replace_tokens(cands, state=state)
+            with state.batch():
+                for cands in self._config.quick_pass_cands:
+                    self.replace_tokens(cands, state=state)
 
             self._verbose_print("Upgrading start and end tokens")
 
             if self._config.do_large_cap_pass:
-                self._verbose_print("Upgrading end tokens with a large candidate count")
-                self.replace_tokens(max_cands, start_idx=end_idx - 8, end_idx=end_idx, decay_factor=1.0, state=state)
-                self.replace_tokens(min_cands, start_idx=end_idx - 16, end_idx=end_idx, decay_factor=1.0, state=state)
-                self._verbose_print("Finished end pass")
+                with state.batch():
+                    self._verbose_print("Upgrading end tokens with a large candidate count")
+                    self.replace_tokens(
+                        max_cands, start_idx=end_idx - 8, end_idx=end_idx, decay_factor=1.0, state=state
+                    )
+                    self.replace_tokens(
+                        min_cands, start_idx=end_idx - 16, end_idx=end_idx, decay_factor=1.0, state=state
+                    )
+                    self._verbose_print("Finished end pass")
 
-                self.replace_tokens(max_cands, end_idx=8, decay_factor=1.0, state=state)
-                self.replace_tokens(min_cands, end_idx=16, decay_factor=1.0, state=state)
-                self._verbose_print("Finished start pass")
+                    self.replace_tokens(max_cands, end_idx=8, decay_factor=1.0, state=state)
+                    self.replace_tokens(min_cands, end_idx=16, decay_factor=1.0, state=state)
+                    self._verbose_print("Finished start pass")
 
             if not self._config.add_first:
                 self.add_tokens(pass_cands=min_cands, max_tokens=(max_tokens + end_idx) / 2 - 2, state=state)
@@ -269,10 +275,15 @@ class PromptUpgrader:
                     break
 
             if self._config.do_large_cap_pass:
-                self._verbose_print("Upgrading end tokens with a large candidate count")
-                self.replace_tokens(max_cands, start_idx=end_idx - 8, end_idx=end_idx, decay_factor=1.0, state=state)
-                self.replace_tokens(min_cands, start_idx=end_idx - 16, end_idx=end_idx, decay_factor=1.0, state=state)
-                self._verbose_print("Finished end pass")
+                with state.batch():
+                    self._verbose_print("Upgrading end tokens with a large candidate count")
+                    self.replace_tokens(
+                        max_cands, start_idx=end_idx - 8, end_idx=end_idx, decay_factor=1.0, state=state
+                    )
+                    self.replace_tokens(
+                        min_cands, start_idx=end_idx - 16, end_idx=end_idx, decay_factor=1.0, state=state
+                    )
+                    self._verbose_print("Finished end pass")
 
             self._verbose_print("Final insertion and replacement passes")
             self.add_tokens(pass_cands=min_cands, max_tokens=max_tokens, state=state)
