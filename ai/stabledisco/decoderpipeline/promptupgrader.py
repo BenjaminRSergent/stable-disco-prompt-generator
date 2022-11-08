@@ -57,10 +57,10 @@ class PromptUpgrader:
             def __exit__(self, exc_type, exc_value, exc_traceback):
                 self._curr_depth -= 1
                 if not self.is_in_batch():
-                    self.state._on_exit_batch()
+                    self._state._on_exit_batch()
                 
             def is_in_batch(self):
-                return self._curr_depth < 1
+                return self._curr_depth > 0
                 
                 
         def __init__(self, parent, target_features, memory, tokens, curr_best_score):
@@ -151,7 +151,7 @@ class PromptUpgrader:
             else:
                 prefix = "Current best"
                 
-            self._parent._print_result(self.target_features, self.tmp_best_score, self.tmp_best_tokens, result_prefix=prefix)
+            self._parent._print_result(self.target_features, self.tmp_best_tokens, self.tmp_best_score, result_prefix=prefix)
 
     def __init__(self, tokens_model: torch.nn.Module, clip_model: ClipModel, rating_model: torch.nn.Module, config: PromptUpgraderConfig = None):
         self._tokens_model = tokens_model
