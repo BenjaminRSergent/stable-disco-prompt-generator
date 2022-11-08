@@ -32,6 +32,8 @@ class PromptUpgraderConfig:
         ascii_only=True,
         no_banned=True,
         verbose=True,
+        target_rating=10.0,
+        target_sim=1.0,
     ):
         if quick_pass_cands is None:
             quick_pass_cands = [32, 32, 64, 64, 128, 128, 256]
@@ -51,6 +53,8 @@ class PromptUpgraderConfig:
         self.ascii_only = ascii_only
         self.no_banned = no_banned
         self.verbose = verbose
+        self.target_rating = target_rating
+        self.target_sim = target_sim
 
 
 class PromptUpgrader:
@@ -122,6 +126,9 @@ class PromptUpgrader:
 
         def get_tokens(self):
             return self.tmp_best_tokens
+
+        def get_best_tokens(self):
+            return self.best_tokens
 
         def set_tokens(self, tokens, score):
             self.best_tokens = tokens.long()
@@ -216,80 +223,83 @@ class PromptUpgrader:
             max_cands = min(int(candidate_cnt * self._config.cand_mul), self._config.max_cands)
             max_tokens = min(sdconsts.prompt_token_len, max_tokens)
 
-            old_best = state.get_score()
-
-            self.remove_tokens(state=state)
-
-            end_idx = state.get_end_idx()
-
-            if self._config.add_first:
-                self.add_tokens(pass_cands=min_cands, max_tokens=(max_tokens + end_idx) / 2 - 2, state=state)
-
-            with state.batch():
-                for cands in self._config.quick_pass_cands:
-                    self.replace_tokens(cands, state=state)
-
-            self._verbose_print("Upgrading start and end tokens")
-
-            if self._config.do_large_cap_pass:
-                with state.batch():
-                    self._verbose_print("Upgrading end tokens with a large candidate count")
-                    self.replace_tokens(
-                        max_cands, start_idx=end_idx - 8, end_idx=end_idx, decay_factor=1.0, state=state
-                    )
-                    self.replace_tokens(
-                        min_cands, start_idx=end_idx - 16, end_idx=end_idx, decay_factor=1.0, state=state
-                    )
-                    self._verbose_print("Finished end pass")
-
-                    self.replace_tokens(max_cands, end_idx=8, decay_factor=1.0, state=state)
-                    self.replace_tokens(min_cands, end_idx=16, decay_factor=1.0, state=state)
-                    self._verbose_print("Finished start pass")
-
-            if not self._config.add_first:
-                self.add_tokens(pass_cands=min_cands, max_tokens=(max_tokens + end_idx) / 2 - 2, state=state)
-
-            end_idx = state.get_end_idx()
-            self._verbose_print("Running initial refinement")
-
-            for _ in range(self._config.max_iters):
-                old_best = state.get_score()
-                self.replace_tokens(min_cands, state=state)
-                if not _is_improvement_eps(state.get_score(), old_best):
-                    break
-
-            self.add_tokens(pass_cands=min_cands, max_tokens=max_tokens, state=state)
-            state.remove_tmp_state()
-
-            self.replace_tokens(max_cands, state=state)
-            self.remove_tokens(state=state)
-            end_idx = state.get_end_idx()
-
-            self._verbose_print("Finishing upgrade with a large pass followed by another refinement loop")
-            self.replace_tokens(num_candidates=max_cands, state=state)
-
-            for _ in range(self._config.max_iters):
-                old_best = state.get_score()
-                self.replace_tokens(min_cands, state=state)
-                if not _is_improvement_eps(state.get_score(), old_best):
-                    break
-
-            if self._config.do_large_cap_pass:
-                with state.batch():
-                    self._verbose_print("Upgrading end tokens with a large candidate count")
-                    self.replace_tokens(
-                        max_cands, start_idx=end_idx - 8, end_idx=end_idx, decay_factor=1.0, state=state
-                    )
-                    self.replace_tokens(
-                        min_cands, start_idx=end_idx - 16, end_idx=end_idx, decay_factor=1.0, state=state
-                    )
-                    self._verbose_print("Finished end pass")
-
-            self._verbose_print("Final insertion and replacement passes")
-            self.add_tokens(pass_cands=min_cands, max_tokens=max_tokens, state=state)
-            self.replace_tokens(num_candidates=max_cands, state=state)
+            self._init_upgrade_pass(state, min_cands, max_cands, max_tokens)
+            if not self._has_hit_target():
+                self._core_upgrade_pass(state, min_cands, max_cands, max_tokens)
+            if not self._has_hit_target():
+                self._final_upgrade_pass(state, min_cands, max_cands, max_tokens)
 
             return state.get_best(True)
+
+    def _init_upgrade_pass(self, state, min_cands, max_cands, max_tokens):
+        # Trim the prompt, do several past passes and optionally upgrade the ends with a high counts.
+        # Tokens get added either after the triming or at the end based on "add_first". Only add
+        # half of the required tokens to allow room for inserting more after other upgrades.
+        self.remove_tokens(state=state)
+        end_idx = state.get_end_idx()
+        if self._config.add_first:
+            self.add_tokens(pass_cands=min_cands, max_tokens=(max_tokens + end_idx) / 2 - 2, state=state)
+
+        with state.batch():
+            for cands in self._config.quick_pass_cands:
+                self.replace_tokens(cands, state=state)
+
+        self._verbose_print("Upgrading start and end tokens")
+
+        if self._config.do_large_cap_pass:
+            with state.batch():
+                self._verbose_print("Upgrading end tokens with a large candidate count")
+                self.replace_tokens(max_cands, start_idx=end_idx - 8, end_idx=end_idx, decay_factor=1.0, state=state)
+                self.replace_tokens(min_cands, start_idx=end_idx - 16, end_idx=end_idx, decay_factor=1.0, state=state)
+                self._verbose_print("Finished end pass")
+
+                self.replace_tokens(max_cands, end_idx=8, decay_factor=1.0, state=state)
+                self.replace_tokens(min_cands, end_idx=16, decay_factor=1.0, state=state)
+                self._verbose_print("Finished start pass")
+
+        if not self._config.add_first:
+            self.add_tokens(pass_cands=min_cands, max_tokens=(max_tokens + end_idx) / 2 - 2, state=state)
+
+    def _core_upgrade_pass(self, state, min_cands, max_cands, max_tokens):
+        # Iterative replace tokens following by adding, trimming and readding tokens.
+        self._verbose_print("Running initial refinement")
+
+        for _ in range(self._config.max_iters):
+            old_best = state.get_score()
+            self.replace_tokens(min_cands, state=state)
+            if not _is_improvement_eps(state.get_score(), old_best):
+                break
+
+        self.add_tokens(pass_cands=min_cands, max_tokens=max_tokens, state=state)
+        state.remove_tmp_state()
+        self.replace_tokens(max_cands, state=state)
+        self.remove_tokens(state=state)
+        self.add_tokens(pass_cands=min_cands, max_tokens=max_tokens, state=state)
+
+    def _final_upgrade_pass(self, state, min_cands, max_cands, max_tokens):
+        # A large replacement fast followed by another iterative replacement loop.
+        # Finally, upgrade the caps and do another trim-replace cycle
+        self._verbose_print("Finishing upgrade with a large pass followed by another refinement loop")
+        self.replace_tokens(num_candidates=max_cands, state=state)
+
+        for _ in range(self._config.max_iters):
+            old_best = state.get_score()
+            self.replace_tokens(min_cands, state=state)
+            if not _is_improvement_eps(state.get_score(), old_best):
+                break
+
+        if self._config.do_large_cap_pass:
+            with state.batch():
+                self._verbose_print("Upgrading end tokens with a large candidate count")
+                end_idx = state.get_end_idx()
+                self.replace_tokens(max_cands, start_idx=end_idx - 8, end_idx=end_idx, decay_factor=1.0, state=state)
+                self.replace_tokens(min_cands, start_idx=end_idx - 16, end_idx=end_idx, decay_factor=1.0, state=state)
+                self._verbose_print("Finished end pass")
+
+        self._verbose_print("Final insertion and replacement passes")
+        self.remove_tokens(state=state)
+        self.add_tokens(pass_cands=min_cands, max_tokens=max_tokens, state=state)
+        self.replace_tokens(num_candidates=max_cands, state=state)
 
     def replace_tokens(
         self,
@@ -354,8 +364,6 @@ class PromptUpgrader:
 
     def add_tokens(
         self,
-        max_insert_cands=4096,
-        min_insert_cands=128 * 2,
         pass_cands=768,
         quick_pass_cands=64,
         max_tokens=sdconsts.prompt_token_len,
@@ -374,8 +382,9 @@ class PromptUpgrader:
             state.push_rev_ret()
 
             rem_tokens = int(max_tokens - (state.get_end_idx() - 1))
+            if rem_tokens > 0:
+                self._verbose_print(f"Adding {rem_tokens} tokens")
 
-            self._verbose_print(f"Adding {rem_tokens} tokens")
             for num_added in range(int(rem_tokens)):
                 with state.batch():
                     num_checks = min(state.get_end_idx(), self._config.num_insert_checks)
@@ -397,8 +406,9 @@ class PromptUpgrader:
                         con_failed = 0
                     else:
                         con_failed += 1
-                        if con_failed >= max_con_failed:
-                            break
+
+                    if con_failed >= max_con_failed or self._has_hit_target(state):
+                        break
 
             state.remove_tmp_state()
             return state.get_best(True)
@@ -585,6 +595,13 @@ class PromptUpgrader:
 
     def set_verbose(self, verbose):
         self._config.verbose = verbose
+
+    def _has_hit_target(self, state):
+        top_features = self._clip_model.features_from_tokens(state.get_best_tokens(), verbosity=0)
+        top_sim = self._clip_model.cosine_similarity(state.target_features, top_features)[0]
+        top_rating = self._rating_model(top_features)[0].item()
+
+        return top_sim >= self._config.target_sim and top_rating >= self._config.target_rating
 
     def _print_result(self, target_features, tokens, curr_best_score, result_prefix="Current best"):
         if not self._config.verbose:
