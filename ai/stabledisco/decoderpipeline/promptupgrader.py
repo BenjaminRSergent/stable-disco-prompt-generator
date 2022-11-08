@@ -78,6 +78,10 @@ class PromptUpgraderFactory:
         self._config.max_iters = max_iters
         return self
 
+    def replacement_iters(self, replacement_iters):
+        self._config.replacement_iters = replacement_iters
+        return self
+
     def add_first(self, add_first):
         self._config.add_first = add_first
         return self
@@ -114,6 +118,7 @@ class PromptUpgraderConfig:
         max_cands=5000,
         cand_mul=2,
         max_iters=15,
+        replacement_iters=2,
         insert_cands=1024 * 2,
         rating_weight=1.0,
         max_token_removal=5,
@@ -131,11 +136,12 @@ class PromptUpgraderConfig:
         verbose=True,
     ):
         if quick_pass_cands is None:
-            quick_pass_cands = [8, 16, 32, 32, 64, 128]
+            quick_pass_cands = [2, 4, 8, 16]
 
         self.max_cands = max_cands
         self.cand_mul = cand_mul
         self.max_iters = max_iters
+        self.replacement_iters = replacement_iters
         self.insert_cands = insert_cands
         self.num_insert_checks = num_insert_checks
         self.quick_pass_cands = quick_pass_cands
@@ -406,7 +412,6 @@ class PromptUpgrader:
     def replace_tokens(
         self,
         num_candidates,
-        num_iters=3,
         decay_factor=0.9,
         start_idx=1,
         end_idx=-1,
@@ -425,7 +430,7 @@ class PromptUpgrader:
 
                     state.push_rev_ret()
 
-                    for _ in range(num_iters):
+                    for _ in range(self._config.replacement_iters):
                         self._swap(state=state, start_idx=start_idx, end_idx=end_idx)
                         self._run_upgrade_cycle(
                             num_candidates, decay_factor=decay_factor, state=state, start_idx=start_idx, end_idx=end_idx
