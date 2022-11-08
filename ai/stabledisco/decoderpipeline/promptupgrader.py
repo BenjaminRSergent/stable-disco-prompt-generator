@@ -131,7 +131,7 @@ class PromptUpgraderConfig:
         verbose=True,
     ):
         if quick_pass_cands is None:
-            quick_pass_cands = [32, 32, 64, 64, 128, 128, 256]
+            quick_pass_cands = [8, 16, 32, 32, 64, 128]
 
         self.max_cands = max_cands
         self.cand_mul = cand_mul
@@ -315,6 +315,9 @@ class PromptUpgrader:
                 state = self.create_state(target_features, prompt)
 
             state.push_rev_ret()
+            if self._has_hit_target(state):
+                self._verbose_print("Input prompt's sim and rating already hits the targets, nothing to do")
+                return state.get_best(True)
 
             tokens = state.best_tokens
             self._print_result(state.target_features, tokens, state.curr_best_score, result_prefix="Initial prompt")
@@ -335,6 +338,7 @@ class PromptUpgrader:
         # Trim the prompt, do several past passes and optionally upgrade the ends with a high counts.
         # Tokens get added either after the triming or at the end based on "add_first". Only add
         # half of the required tokens to allow room for inserting more after other upgrades.
+        self._verbose_print("Running initial upgrade pass and insertions")
         self.remove_tokens(state=state)
         end_idx = state.get_end_idx()
         if self._config.add_first:
@@ -343,8 +347,6 @@ class PromptUpgrader:
         with state.batch():
             for cands in self._config.quick_pass_cands:
                 self.replace_tokens(cands, state=state)
-
-        self._verbose_print("Upgrading start and end tokens")
 
         if self._config.do_large_cap_pass:
             with state.batch():
@@ -362,7 +364,7 @@ class PromptUpgrader:
 
     def _core_upgrade_pass(self, state, min_cands, max_cands, max_tokens):
         # Iterative replace tokens following by adding, trimming and readding tokens.
-        self._verbose_print("Running initial refinement")
+        self._verbose_print("Running core replacement passes")
 
         for _ in range(self._config.max_iters):
             old_best = state.get_score()
