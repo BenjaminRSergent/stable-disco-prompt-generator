@@ -1,4 +1,5 @@
 import ai.stabledisco.constants as sdconsts
+from ai.stabledisco.decoderpipeline.lowerfeaturelayers import LowerFeatureLayers
 import ai.stabledisco.utils as sdutils
 import ai.torchmodules as torchmodules
 import ai.torchmodules.layers as torchlayers
@@ -9,7 +10,7 @@ from ai.stabledisco.decoderpipeline.knowledgetransfernetwork import KnowledgeTra
 
 
 class FeaturesToRatingModel(torchmodules.BaseModel):
-    name = "FeaturesToRatingV8"
+    name = "FeaturesToRatingV9"
 
     @staticmethod
     def build_teacher(**kwargs):
@@ -17,7 +18,7 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
 
     @staticmethod
     def build_student(**kwargs):
-        return FeaturesToRatingModel(name_suffix="Student", init_mul=2, res_unit_mul=1.5, **kwargs)
+        return FeaturesToRatingModel(name_suffix="Student", **kwargs)
 
     @staticmethod
     def build_knowledge_transfer_model(teacher=None, teacher_checkpoint="best", **kwargs):
@@ -32,46 +33,31 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
     def __init__(
         self,
         name_suffix="",
-        init_mul=4,
-        res_unit_mul=2,
-        res_layers=3,
-        units_div=3,
-        num_res_blocks=5,
-        max_lr=2e-4,
-        min_lr_divisor=20,
+        max_lr=1e-2,
+        min_lr_divisor=100,
+        lower_dropout=0.5,
         epoch_batches=8214,
-        step_size_up_epoch_mul=0.5,
-        warmup_period_epoch_mul=2,
-        gamma=0.75,
+        step_size_up_epoch_mul=1,
+        warmup_period_epoch_mul=1,
+        gamma=0.5,
         last_epoch=-1,
         device=None,
     ):
         super().__init__(FeaturesToRatingModel.name + name_suffix, device=device)
-        # Input = (-1, 77, num_features)
-        # Output = (-1, 77, vocab_size)
-        # Loss = diffable encoding
-
-        self._expander = torchlayers.LinearWithActivation(
-            sdconsts.feature_width, sdconsts.feature_width * init_mul, dropout=0.2, activation=torchlayers.QuickGELU
-        )
-
-        self._resblocks = torchlayers.ReducingResDenseStack(
-            int(sdconsts.feature_width * init_mul),
-            num_res_blocks=num_res_blocks,
-            res_unit_mul=res_unit_mul,
-            res_layers=res_layers,
-            units_div=units_div,
-            dropout_div=1,
-            start_dropout=0.1,
+        self._feature_expander = LowerFeatureLayers(dropout=lower_dropout)
+        dense_stack_units = [(4, 512), (4, 256)]
+        self._dense_stack = torchlayers.DenseStack(
+            sdconsts.pruned_expander_out,
+            dense_stack_units,
             activation=nn.LeakyReLU,
+            dropout=0.5,
         )
 
-        self._rating_out = torch.nn.Linear(self._resblocks.out_features, 1)
+        self._rating_out = torch.nn.Linear(self._dense_stack.out_features, 1)
         nn.init.xavier_uniform_(self._rating_out.weight)
 
         self._loss_func = nn.MSELoss()
-
-        self._optimizer = torch.optim.NAdam(self.parameters(), max_lr, betas=(0.88, 0.995))
+        self._optimizer = torch.optim.AdamW(self.parameters(), max_lr, betas=(0.88, 0.995))
 
         self._scheduler = torchscheduler.make_cyclic_with_warmup(
             optimizer=self._optimizer,
@@ -92,8 +78,8 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
 
     def forward(self, features):
         x = features / features.norm(dim=-1, keepdim=True)
-        x = self._expander(x)
-        x = self._resblocks(x)
+        x = self._feature_expander(features)
+        x = self._dense_stack(x)
         return self._rating_out(x)
 
     def get_rating(self, features):

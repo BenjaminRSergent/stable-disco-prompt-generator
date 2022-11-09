@@ -191,6 +191,7 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
 
     def clone_forward_to_rev(self):
         self._rev_decoder = copy.deepcopy(self._decoder)
+        
 
     def _calc_batch_loss(self, features: torch.Tensor, tokens: torch.Tensor = None, rev_tokens: torch.Tensor = None):
         with torch.autocast(device_type="cuda"):
@@ -218,6 +219,8 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         self._clip_model = clip_model
 
     def forward(self, features, tokens=None, rev_tokens=None):
+        if isinstance(features, list):
+            features, tokens, rev_tokens = features
         features = features / features.norm(dim=-1, keepdim=True)
         encoder_out = self.features_to_memory(features)
 

@@ -74,7 +74,7 @@ class PromptUpgraderFactory:
         self._config.quick_pass_cands = quick_pass_cands
         return self
 
-    def max_iters(self, insert_cands):
+    def insert_cands(self, insert_cands):
         self._config.insert_cands = insert_cands
         return self
 

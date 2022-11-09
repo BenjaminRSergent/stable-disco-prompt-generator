@@ -346,7 +346,7 @@ class AlteredFeaturesSet(Dataset):
                 scaled_features = scaled_features / scaled_features.norm(dim=-1, keepdim=True)
                 sim = sdutils.cosine_sim(features, scaled_features)
 
-        ret = (scaled_features.view(-1), sim)
+        ret = (scaled_features.view(-1), sim.view(-1))
         if idx // self._num_steps == self._end_idx - 1:
             self.clear()
 
