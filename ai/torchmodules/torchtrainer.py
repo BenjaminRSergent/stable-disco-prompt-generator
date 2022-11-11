@@ -22,12 +22,14 @@ class TorchTrainer:
         validation_loader: DataLoader,
         best_validation: float = None,
         out_dir: str = None,
-        patience=2,
+        patience=None,
         max_epochs=100,
         num_to_acc=1,
         print_every=1000,
         print_learning_rate=False,
     ) -> float:
+        if patience is None:
+            patience = self._patience
         new_best_val_loss = best_validation
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         if not out_dir:

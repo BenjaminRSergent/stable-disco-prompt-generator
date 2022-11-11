@@ -83,7 +83,6 @@ class LinearWithActivation(nn.Module):
                         nn.Linear(
                             input_size,
                             output_size,
-                            bias=(batch_norm_type == Normalization.NormType.NONE),
                         ),
                     ),
                     ("activation", activation()),

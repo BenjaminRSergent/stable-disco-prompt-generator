@@ -75,7 +75,26 @@ def rev_tokens(text_tokens):
 
     for flipped_idx, token_idx in enumerate(end_idx_arg):
         flipped[flipped_idx] = torch.cat((flipped[flipped_idx, token_idx:], flipped[flipped_idx, :token_idx]))
+
     return flipped.long()
+
+
+def rev_based_on_tokens(text_tokens, other):
+    if isinstance(text_tokens, torch.Tensor) and len(text_tokens.shape) == 1:
+        text_tokens = text_tokens.unsqueeze(0)
+
+    flipped = torch.flip(text_tokens, dims=(1,))
+    search_token = sdconsts.sot_token if is_rev_tokens(text_tokens) else sdconsts.eot_token
+    end_idx_arg = torch.argwhere(flipped == search_token)[:, 1]
+
+    flipped_other = torch.flip(other, dims=(1,))
+
+    for flipped_idx, token_idx in enumerate(end_idx_arg):
+        flipped_other[flipped_idx] = torch.cat(
+            (flipped_other[flipped_idx, token_idx:], flipped_other[flipped_idx, :token_idx])
+        )
+
+    return flipped_other.long()
 
 
 def is_rev_tokens(text_tokens):

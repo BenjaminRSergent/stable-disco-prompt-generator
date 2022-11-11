@@ -32,6 +32,7 @@ from ai.stabledisco.utils.promptutils import (
     random_prompt_combo,
     change_rev,
     rev_tokens,
+    rev_based_on_tokens,
     is_rev_tokens,
     add_text_features,
     add_features,

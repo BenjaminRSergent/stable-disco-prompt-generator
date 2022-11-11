@@ -324,7 +324,7 @@ class BeamSearcher:
             upgrade_config = UpgradeConfig()
         self._upgrade_config = upgrade_config
 
-        upgrader_factory = decoderpipeline.PromptUpgraderFactory(self._tokens_model, clip_model, self._ratings_model)
+        upgrader_factory = decoderpipeline.PromptUpgraderFactory(self._tokens_model, self._ratings_model, clip_model)
         upgrader_factory.rating_weight(self._search_config.rating_weight)
         upgrader_factory.target_rating(0).target_sim(self._search_config.target_sim)
         self._upgrader = upgrader_factory.verbose(self._upgrade_config.verbose).build()
@@ -475,7 +475,7 @@ class BeamSearcher:
         curr_tokens = torch.stack(tuple((x[1] for x in search_state.curr_beams)))
 
         token_probs = self._tokens_model.get_next_probs(
-            search_state.memory, curr_tokens, ascii_only=self._search_config.ascii_only
+            memory=search_state.memory, tokens=curr_tokens, ascii_only=self._search_config.ascii_only
         )
         token_probs = self._safe_log(torch.relu(token_probs))
         token_probs = token_probs / token_probs.norm(dim=-1, keepdim=True)

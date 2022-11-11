@@ -15,7 +15,7 @@ from ai.torchmodules.layers.basiclayers import Normalization
 
 
 class FeaturesToTokensAesModel(torchmodules.BaseModel):
-    name = "FeaturesToTokensAesModelV4"
+    name = "FeaturesToTokensAesModelV5"
 
     @staticmethod
     def build_large(clip_model: nn.Module, freeze_embedding=True):
@@ -108,6 +108,18 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         self._pre_encode_ln = nn.LayerNorm(sdconsts.feature_width)
 
         block_width = int(sdconsts.feature_width * block_mul)
+        self._rev_encoder = nn.TransformerEncoder(
+            nn.TransformerEncoderLayer(
+                d_model=sdconsts.feature_width,
+                nhead=self._transformer_heads,
+                dim_feedforward=block_width,
+                activation=torchlayers.QuickGELU(),
+                dropout=upper_dropout,
+                batch_first=True,
+            ),
+            num_layers=self._transformer_layers,
+        )
+
         self._encoder = nn.TransformerEncoder(
             nn.TransformerEncoderLayer(
                 d_model=sdconsts.feature_width,
@@ -191,7 +203,6 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
 
     def clone_forward_to_rev(self):
         self._rev_decoder = copy.deepcopy(self._decoder)
-        
 
     def _calc_batch_loss(self, features: torch.Tensor, tokens: torch.Tensor = None, rev_tokens: torch.Tensor = None):
         with torch.autocast(device_type="cuda"):
@@ -203,11 +214,7 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
             if rev_tokens is None:
                 return self._calc_loss(outputs, tokens)
 
-            return (
-                self._calc_loss(outputs[0], tokens)
-                + self._calc_loss(outputs[1], rev_tokens)
-                + self._calc_loss(outputs[2], tokens)
-            ) / 3
+            return (self._calc_loss(outputs[0], tokens) + self._calc_loss(outputs[1], tokens)) / 2
 
     def _calc_loss(self, output, targets):
         if targets.dtype.is_floating_point:
@@ -222,38 +229,35 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         if isinstance(features, list):
             features, tokens, rev_tokens = features
         features = features / features.norm(dim=-1, keepdim=True)
-        encoder_out = self.features_to_memory(features)
 
-        if tokens is not None:
-            tgt = self._token_embedding(tokens) + self._positional_embedding
-            decoder_out = self._decoder(
-                memory=encoder_out,
-                tgt=tgt,
-                tgt_mask=self._target_mask,
-                tgt_key_padding_mask=(tokens == 0),
-            )
-            vocab_out = self._vocab_out(decoder_out)
+        if rev_tokens is None:
+            encoder_out = self.features_to_memory(features, include_rev=False)
+        else:
+            encoder_out, rev_encoder_out = self.features_to_memory(features, include_rev=True)
+
+        tgt = self._token_embedding(tokens) + self._positional_embedding
+        decoder_out = self._decoder(
+            memory=encoder_out,
+            tgt=tgt,
+            tgt_mask=self._target_mask,
+            tgt_key_padding_mask=(tokens == 0),
+        )
+        vocab_out = self._vocab_out(decoder_out)
 
         if rev_tokens is not None:
             rev_tgt = self._token_embedding(rev_tokens) + self._positional_embedding
             rev_decoder_out = self._rev_decoder(
-                memory=encoder_out,
+                memory=rev_encoder_out,
                 tgt=rev_tgt,
                 tgt_mask=self._target_mask,
                 tgt_key_padding_mask=(rev_tokens == 0),
             )
-            rev_vocab_out = self._vocab_out(rev_decoder_out)
+            full_out = torch.cat((decoder_out, sdutils.rev_based_on_tokens(tokens, rev_decoder_out)), dim=-1)
+            return vocab_out, self._two_way_vocab_out(self._two_way_hidden(full_out))
 
-        if rev_tokens is None:
-            return vocab_out
-        if tokens is None:
-            return rev_vocab_out
+        return vocab_out
 
-        full_out = torch.cat((decoder_out, rev_decoder_out), dim=-1)
-
-        return vocab_out, rev_vocab_out, self._two_way_vocab_out(self._two_way_hidden(full_out))
-
-    def features_to_memory(self, latent_img_features, dtype=None):
+    def features_to_memory(self, latent_img_features, include_rev=False, dtype=None):
         if not dtype:
             dtype = self._dtype
         # latent_img_features = latent_img_features.to(dtype)
@@ -264,7 +268,11 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         seq_features = self._seq_reshaper(x) + self._positional_embedding
         seq_features = self._pre_encode_ln(seq_features)
 
-        return self._encoder(seq_features)
+        memory = self._encoder(seq_features)
+        if not include_rev:
+            return memory
+
+        return memory, self._rev_encoder(seq_features)
 
     def generate_square_subsequent_mask(self, size):
         attn_shape = (1, size, size)
@@ -294,62 +302,55 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
 
     # TODO: custom mask
     def get_next_probs(
-        self, memory, tokens=None, rev_tokens=None, ascii_only=True, no_banned=True, custom_mask=None, allow_end=False
+        self,
+        memory,
+        tokens,
+        rev_memory=None,
+        rev_tokens=None,
+        ascii_only=True,
+        no_banned=True,
+        custom_mask=None,
+        idx=-1,
+        allow_end=False,
     ):
-        if tokens is not None:
-            num_batch = tokens.size(0)
-            size = tokens.size(1)
-            if size == self._seq_len - 1:
-                probs = torch.zeros(len(clip_tokenizer.encoder), device=self._device)
-                probs[sdconsts.eot_token] = 1
-                return probs.repeat((tokens.shape[0], 1))
+        num_batch = tokens.size(0)
+        size = tokens.size(1)
+        if size == self._seq_len - 1:
+            probs = torch.zeros(len(clip_tokenizer.encoder), device=self._device)
+            probs[sdconsts.eot_token] = 1
+            return probs.repeat((tokens.shape[0], 1))
 
-        if rev_tokens is not None:
-            num_batch = rev_tokens.size(0)
-            rev_size = rev_tokens.size(1)
-            if rev_size == self._seq_len - 1:
-                probs = torch.zeros(len(clip_tokenizer.encoder), device=self._device)
-                probs[sdconsts.sot_token] = 1
-                return probs.repeat((rev_tokens.shape[0], 1))
+        curr_embedded = self._clip_model.token_embedding(tokens)
+        curr_embedded = curr_embedded + self._clip_model.positional_embedding[:size]
+        curr_embedded = curr_embedded
+        memory = torch.cat(num_batch * [memory]).view(num_batch, 77, 768)
 
-        if tokens is not None:
-            curr_embedded = self._clip_model.token_embedding(tokens)
-            curr_embedded = curr_embedded + self._clip_model.positional_embedding[:size]
-            curr_embedded = curr_embedded
-            tgt_mask = self._target_mask[:size, :size]
-            memory = torch.cat(num_batch * [memory]).view(num_batch, 77, 768)
-
-            decoder_out = self._decoder(
-                tgt=curr_embedded,
-                memory=memory,
-                tgt_mask=tgt_mask,
-                tgt_key_padding_mask=(tokens == 0),
-            )
-
-        if rev_tokens is not None:
-            curr_embedded = self._clip_model.token_embedding(rev_tokens)
-            curr_embedded = curr_embedded + self._clip_model.positional_embedding[:rev_size]
-            curr_embedded = curr_embedded
-            tgt_mask = self._target_mask[:rev_size, :rev_size]
-            memory = torch.cat(num_batch * [memory]).view(num_batch, 77, 768)
-
-            rev_decoder_out = self._rev_decoder(
-                tgt=curr_embedded,
-                memory=memory,
-                tgt_mask=tgt_mask,
-                tgt_key_padding_mask=(rev_tokens == 0),
-            )
+        decoder_out = self._decoder(
+            tgt=curr_embedded,
+            memory=memory,
+            tgt_mask=self._target_mask[:size, :size],
+            tgt_key_padding_mask=(tokens == 0),
+        )
 
         batch_idxs = torch.arange(num_batch, device=self._device, dtype=torch.long)
+
         if rev_tokens is None:
             vocab_out = self._vocab_out(decoder_out[:, -1])
             vocab_out[batch_idxs, tokens[:, -1].long()] /= 2
-        elif tokens is None:
-            vocab_out = self._vocab_out(rev_decoder_out[:, -1])
-            vocab_out[batch_idxs, rev_tokens[:, -1].long()] /= 2
         else:
-            full_out = torch.cat((decoder_out[:, -1, :], rev_decoder_out[:, -1, :]), dim=-1)
-            vocab_out = self._two_way_vocab_out(self._two_way_hidden(full_out))
+            rev_tgt = self._token_embedding(rev_tokens) + self._positional_embedding
+            rev_decoder_out = self._rev_decoder(
+                memory=rev_memory,
+                tgt=rev_tgt,
+                tgt_mask=self._target_mask,
+                tgt_key_padding_mask=(rev_tokens == 0),
+            )
+            rev_decoder = sdutils.rev_based_on_tokens(tokens, rev_decoder_out)
+            full_out = torch.cat((decoder_out, rev_decoder), dim=-1)
+            hidden = self._two_way_hidden(full_out)
+            vocab_out = self._two_way_vocab_out(hidden)
+            vocab_out = vocab_out[:, idx, :].squeeze(1)
+
             vocab_out[batch_idxs, rev_tokens[:, -1].long()] /= 2
             vocab_out[batch_idxs, tokens[:, -1].long()] /= 2
 
@@ -365,10 +366,16 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
 
         return probs
 
-    def get_next_probs_x(
-        self, memory, tokens=None, idx_to_find=-1, ascii_only=True, no_banned=True, allow_end=False, custom_mask=None
+    def get_two_way_probs(
+        self,
+        memory,
+        rev_memory,
+        tokens,
+        rev_tokens,
+        ascii_only=True,
+        no_banned=True,
+        custom_mask=None,
     ):
-        # raise NotImplementedError("get_next_probs_x does not currently work")
         num_batch = tokens.size(0)
         size = tokens.size(1)
         if size == self._seq_len - 1:
@@ -381,27 +388,29 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         curr_embedded = curr_embedded
         memory = torch.cat(num_batch * [memory]).view(num_batch, 77, 768)
 
-        tgt_mask = torch.zeros((size, size), device=self._device)
-        tgt_mask.fill_diagonal_(-float("inf"))
         decoder_out = self._decoder(
             tgt=curr_embedded,
             memory=memory,
-            tgt_mask=tgt_mask,
+            tgt_mask=self._target_mask[:size, :size],
             tgt_key_padding_mask=(tokens == 0),
         )
-
-        vocab_out = self._vocab_out(decoder_out[:, min(idx_to_find + 1, 76)])
-        vocab_out[torch.arange(vocab_out.size(0), device=self._device, dtype=torch.long), tokens[:, -1]] /= 2
+        rev_tgt = self._token_embedding(rev_tokens) + self._positional_embedding
+        rev_decoder_out = self._rev_decoder(
+            memory=rev_memory,
+            tgt=rev_tgt,
+            tgt_mask=self._target_mask,
+            tgt_key_padding_mask=(rev_tokens == 0),
+        )
+        rev_decoder = sdutils.rev_based_on_tokens(tokens, rev_decoder_out)
+        full_out = torch.cat((decoder_out, rev_decoder), dim=-1)
+        hidden = self._two_way_hidden(full_out)
+        vocab_out = self._two_way_vocab_out(hidden)
 
         probs = torch.softmax(vocab_out, dim=-1)
         if custom_mask is not None:
             probs *= custom_mask
         elif ascii_only or no_banned:
             probs *= self.get_mask(ascii_only, no_banned)
-
-        if not allow_end:
-            probs[:, -1] = 0
-            probs[:, -2] = 0
 
         return probs
 
@@ -446,8 +455,8 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         banned_words = [
             "erotic",
             "furry",
-            "cyberpunk",
-            "steampunk",
+            # "cyberpunk",
+            # "steampunk",
             "cp",
             "jpg",
             "nude",

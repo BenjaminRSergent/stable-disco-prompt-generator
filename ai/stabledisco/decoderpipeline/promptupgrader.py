@@ -186,10 +186,11 @@ class PromptUpgrader:
             def is_in_batch(self):
                 return self._curr_depth > 0
 
-        def __init__(self, parent, target_features, memory, tokens, curr_best_score):
+        def __init__(self, parent, target_features, memory, rev_memory, tokens, curr_best_score):
             self._parent = parent
             self.target_features = target_features
             self.memory = memory
+            self.rev_memory = rev_memory
             self.batch_context = self.BatchContext(self)
 
             self.print_improvements = True
@@ -300,7 +301,7 @@ class PromptUpgrader:
         )
         self._calculator = calculator
 
-    def create_state(self, target_features, prompt, memory=None):
+    def create_state(self, target_features, prompt, memory=None, rev_memory=None):
         self._verbose_print("Creating new state")
         target_features = target_features.view(1, -1).float()
         target_features /= target_features.norm(dim=-1, keepdim=True)
@@ -311,11 +312,11 @@ class PromptUpgrader:
             tokens = prompt.clone()
 
         tokens = tokens.long()
-        if memory is None:
-            memory = self._tokens_model.features_to_memory(target_features).squeeze(0)
+        if memory is None or rev_memory is None:
+            memory, rev_memory = self._tokens_model.features_to_memory(target_features, include_rev=True)
         curr_best_score = self._calculator.score_tokens(target_features, tokens)[0].item()
 
-        return PromptUpgrader.PromptState(self, target_features, memory, tokens, curr_best_score)
+        return PromptUpgrader.PromptState(self, target_features, memory, rev_memory, tokens, curr_best_score)
 
     def upgrade(
         self, candidate_cnt=1024, max_tokens=sdconsts.prompt_token_len, target_features=None, prompt=None, state=None
@@ -549,9 +550,11 @@ class PromptUpgrader:
             rev_idx = max(curr_end_idx - curr_end, 1)
 
             replacement_probs = self._tokens_model.get_next_probs(
-                state.memory,
-                tokens=rev_tokens[:rev_idx].unsqueeze(0),
-                rev_tokens=tokens[:curr_end].unsqueeze(0),
+                memory=state.memory,
+                rev_memory=state.rev_memory,
+                tokens=rev_tokens.unsqueeze(0),
+                rev_tokens=tokens.unsqueeze(0),
+                idx = curr_end,
                 ascii_only=self._config.ascii_only,
                 no_banned=self._config.no_banned,
             )[0]
@@ -653,12 +656,13 @@ class PromptUpgrader:
                 self._print_result(state.target_features, tokens, curr_best_score, True)
 
             rev_tokens = sdutils.change_rev(tokens, False)[0]
-            rev_idx = max(end_idx - curr_end, 1)
 
             replacement_probs = self._tokens_model.get_next_probs(
-                state.memory,
-                tokens=rev_tokens[:rev_idx].unsqueeze(0),
-                rev_tokens=tokens[:curr_end].unsqueeze(0),
+                memory=state.memory,
+                rev_memory=state.rev_memory,
+                tokens=rev_tokens.unsqueeze(0),
+                rev_tokens=tokens.unsqueeze(0),
+                idx = curr_end,
                 ascii_only=self._config.ascii_only,
                 no_banned=self._config.no_banned,
             )[0]

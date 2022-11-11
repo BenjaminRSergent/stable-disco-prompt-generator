@@ -33,13 +33,12 @@ class ReducingResDenseStack(nn.Module):
             self._resblocks.append(block)
 
             prev_width = curr_width
-            curr_width //= units_div
+            curr_width = int(curr_width / units_div)
+            # For systems that perform better on multiples of 8
+            curr_width -= curr_width % 8
 
             reducer = LinearWithActivation(
-                prev_width,
-                curr_width,
-                dropout=curr_dropout,
-                batch_norm_type=None,
+                int(prev_width), int(curr_width), dropout=curr_dropout, batch_norm_type=None, activation=activation
             )
 
             self._resblocks.append(reducer)

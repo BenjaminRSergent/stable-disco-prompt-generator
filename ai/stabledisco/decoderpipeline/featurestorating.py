@@ -3,6 +3,7 @@ from ai.stabledisco.decoderpipeline.lowerfeaturelayers import LowerFeatureLayers
 import ai.stabledisco.utils as sdutils
 import ai.torchmodules as torchmodules
 import ai.torchmodules.layers as torchlayers
+from ai.torchmodules.layers.basiclayers import Normalization
 import ai.torchmodules.scheduler as torchscheduler
 import torch
 import torch.nn as nn
@@ -33,27 +34,36 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
     def __init__(
         self,
         name_suffix="",
-        max_lr=1e-2,
-        min_lr_divisor=100,
-        lower_dropout=0.5,
+        max_lr=3e-4,
+        min_lr_divisor=6,
+        num_res_blocks=4,
+        res_unit_mul=4,
+        res_layers=4,
+        units_div=1.5,
+        dropout_div=1.5,
+        start_dropout=0.5,
         epoch_batches=8214,
-        step_size_up_epoch_mul=1,
+        step_size_up_epoch_mul=2,
         warmup_period_epoch_mul=1,
         gamma=0.5,
         last_epoch=-1,
         device=None,
     ):
         super().__init__(FeaturesToRatingModel.name + name_suffix, device=device)
-        self._feature_expander = LowerFeatureLayers(dropout=lower_dropout)
-        dense_stack_units = [(4, 512), (4, 256)]
-        self._dense_stack = torchlayers.DenseStack(
-            sdconsts.pruned_expander_out,
-            dense_stack_units,
+
+        self._res_stack = torchlayers.ReducingResDenseStack(
+            sdconsts.feature_width,
+            num_res_blocks=num_res_blocks,
+            res_unit_mul=res_unit_mul,
+            res_layers=res_layers,
+            units_div=units_div,
+            dropout_div=dropout_div,
+            start_dropout=start_dropout,
+            batch_norm_type=Normalization.NormType.BATCH,
             activation=nn.LeakyReLU,
-            dropout=0.5,
         )
 
-        self._rating_out = torch.nn.Linear(self._dense_stack.out_features, 1)
+        self._rating_out = torch.nn.Linear(self._res_stack.out_features, 1)
         nn.init.xavier_uniform_(self._rating_out.weight)
 
         self._loss_func = nn.MSELoss()
@@ -78,9 +88,8 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
 
     def forward(self, features):
         x = features / features.norm(dim=-1, keepdim=True)
-        x = self._feature_expander(features)
-        x = self._dense_stack(x)
-        return self._rating_out(x)
+        x = self._res_stack(features)
+        return self._rating_out(x).view(-1)
 
     def get_rating(self, features):
         return self(features).reshape(1)
@@ -101,7 +110,7 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
             return top_words, top_ratings
 
     def improve_rating(
-        self, features, target_rating=9.0, max_diff=0.05, per_step=1e-8, alpha=0.9, max_divs=100, verbose=False
+        self, features, target_rating=9.0, max_diff=0.05, per_step=1e-3, alpha=0.85, max_divs=200, verbose=False
     ):
         with torch.no_grad():
             if len(features.shape) == 1:
