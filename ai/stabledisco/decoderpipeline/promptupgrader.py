@@ -314,7 +314,9 @@ class PromptUpgrader:
         tokens = tokens.long()
         if memory is None or rev_memory is None:
             memory, rev_memory = self._tokens_model.features_to_memory(target_features, include_rev=True)
-        curr_best_score = self._calculator.score_tokens(target_features, tokens)[0].item()
+        curr_best_score = self._calculator.score_tokens(
+            target_features, tokens, target_sim=self._config.target_sim, target_rating=self._config.target_rating
+        )[0].item()
 
         return PromptUpgrader.PromptState(self, target_features, memory, rev_memory, tokens, curr_best_score)
 
@@ -354,10 +356,10 @@ class PromptUpgrader:
         end_idx = state.get_end_idx()
         if self._config.add_first:
             self.add_tokens(pass_cands=min_cands, max_tokens=(max_tokens + end_idx) / 2 - 2, state=state)
-
-        with state.batch():
-            for cands in self._config.quick_pass_cands:
-                self.replace_tokens(cands, state=state)
+        self._verbose_print(f"Running post add upgrade with batched cand counts {self._config.quick_pass_cands}")
+        # with state.batch():
+        for cands in self._config.quick_pass_cands:
+            self.replace_tokens(cands, state=state)
 
         if self._config.do_large_cap_pass:
             with state.batch():
@@ -458,12 +460,18 @@ class PromptUpgrader:
             trimmed_prompt = sdutils.trim_prompt(
                 state.get_tokens(),
                 self._clip_model,
+                calculator=self._calculator,
                 max_to_remove=self._config.max_token_removal,
                 thresh=self._config.removal_sim_thresh,
                 orig_features=state.target_features,
             )
             trimmed_tokens = clip.tokenize(trimmed_prompt)[0].cuda()
-            trimmed_score = self._calculator.score_tokens(state.target_features, trimmed_tokens)[0].item()
+            trimmed_score = self._calculator.score_tokens(
+                state.target_features,
+                trimmed_tokens,
+                target_sim=self._config.target_sim,
+                target_rating=self._config.target_rating,
+            )[0].item()
 
             state.set_tokens(trimmed_tokens, trimmed_score)
 
@@ -554,7 +562,7 @@ class PromptUpgrader:
                 rev_memory=state.rev_memory,
                 tokens=rev_tokens.unsqueeze(0),
                 rev_tokens=tokens.unsqueeze(0),
-                idx = curr_end,
+                idx=curr_end,
                 ascii_only=self._config.ascii_only,
                 no_banned=self._config.no_banned,
             )[0]
@@ -572,7 +580,13 @@ class PromptUpgrader:
         if not to_test:
             return state.get_best()
         test_stack = torch.stack(tuple(to_test))
-        top_tokens, top_sim = self._calculator.rank(state.target_features, test_stack, 1)
+        top_tokens, top_sim = self._calculator.rank(
+            state.target_features,
+            test_stack,
+            1,
+            target_sim=self._config.target_sim,
+            target_rating=self._config.target_rating,
+        )
         old_score = state.get_score()
         state.set_tmp_state(top_tokens[0][0], top_sim[0].item())
 
@@ -598,7 +612,13 @@ class PromptUpgrader:
 
             # TODO: Fix duplcate work
             test_stack = torch.stack(tuple(to_test))
-            top_tokens, top_sim = self._calculator.rank(state.target_features, test_stack, 1)
+            top_tokens, top_sim = self._calculator.rank(
+                state.target_features,
+                test_stack,
+                1,
+                target_sim=self._config.target_sim,
+                target_rating=self._config.target_rating,
+            )
 
             if state.update_tokens_if_better(top_tokens, top_sim):
                 improved = True
@@ -625,7 +645,11 @@ class PromptUpgrader:
 
         orig_to_upgrade = list(to_upgrade)
         impact = sdutils.rank_token_impact(
-            tokens, self._clip_model, idxs=orig_to_upgrade, target_features=state.target_features
+            tokens,
+            self._clip_model,
+            calculator=self._calculator,
+            idxs=orig_to_upgrade,
+            target_features=state.target_features,
         )
         to_upgrade = [(impact_idx, arg[1]) for impact_idx, arg in enumerate(impact[::-1])]
 
@@ -662,7 +686,7 @@ class PromptUpgrader:
                 rev_memory=state.rev_memory,
                 tokens=rev_tokens.unsqueeze(0),
                 rev_tokens=tokens.unsqueeze(0),
-                idx = curr_end,
+                idx=curr_end,
                 ascii_only=self._config.ascii_only,
                 no_banned=self._config.no_banned,
             )[0]
@@ -681,7 +705,13 @@ class PromptUpgrader:
 
             # TODO: Fix duplcate work
             test_stack = torch.stack(tuple(to_test))
-            top_tokens, top_sim = self._calculator.rank(state.target_features, test_stack, 1)
+            top_tokens, top_sim = self._calculator.rank(
+                state.target_features,
+                test_stack,
+                1,
+                target_sim=self._config.target_sim,
+                target_rating=self._config.target_rating,
+            )
 
             if state.update_tokens_if_better(top_tokens[0][0], top_sim[0]):
                 ends.append(curr_end)
@@ -690,7 +720,11 @@ class PromptUpgrader:
                 # print(iter_num, len(to_upgrade))
 
                 impact = sdutils.rank_token_impact(
-                    tokens, self._clip_model, idxs=orig_to_upgrade, target_features=state.target_features
+                    tokens,
+                    self._clip_model,
+                    calculator=self._calculator,
+                    idxs=orig_to_upgrade,
+                    target_features=state.target_features,
                 )
 
                 rem = len(to_upgrade) - iter_num

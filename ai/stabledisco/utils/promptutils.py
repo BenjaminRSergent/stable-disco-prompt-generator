@@ -103,7 +103,7 @@ def is_rev_tokens(text_tokens):
     return text_tokens.view(-1)[0] == sdconsts.eot_token
 
 
-def rank_word_impact(prompt, clip_model, idxs=None, orig_features=None, normalize=True):
+def rank_word_impact(prompt, clip_model, calculator, idxs=None, orig_features=None, normalize=True):
     # Add spaces between punctuation and numbers
     prompt = decode_tokens(clip.tokenize(prompt)[0])[0]
     full_features = clip_model.get_features(prompt)[0]
@@ -115,17 +115,14 @@ def rank_word_impact(prompt, clip_model, idxs=None, orig_features=None, normaliz
     if idxs is None:
         idxs = range(1, end_idx)
 
-    orig_diff = 1 - mathutils.cosine_sim(mathutils.norm_t(orig_features), mathutils.norm_t(full_features)).item()
+    orig_score = calculator.score_tokens(orig_features, clip.tokenize(prompt).cuda())
     impact_tuples = []
     total_impact = 0
     for idx in idxs:
         drop_prompt = " ".join(split_prompt[:idx] + split_prompt[idx + 1 :])
-        split_features = clip_model.get_features(drop_prompt)[0]
-        cos_diff = 1 - (
-            orig_diff + mathutils.cosine_sim(mathutils.norm_t(orig_features), mathutils.norm_t(split_features)).item()
-        )
-        total_impact += cos_diff
-        impact_tuples.append([cos_diff, split_prompt[idx], drop_prompt])
+        score_loss = orig_score - calculator.score_tokens(orig_features, clip.tokenize(drop_prompt).cuda())
+        total_impact += score_loss
+        impact_tuples.append([score_loss, split_prompt[idx], drop_prompt])
 
     impact_tuples.sort(reverse=True)
 
@@ -136,10 +133,11 @@ def rank_word_impact(prompt, clip_model, idxs=None, orig_features=None, normaliz
     return [WordImpact(*impact) for impact in impact_tuples]
 
 
-def rank_token_impact(tokens, clip_model, idxs=None, target_features=None, normalize=True):
-    full_features = clip_model.get_features(tokens)[0]
+def rank_token_impact(tokens, clip_model, calculator, idxs=None, target_features=None, normalize=True):
     if target_features is None:
-        target_features = full_features
+        target_features = clip_model.get_features(tokens)[0]
+    target_features = mathutils.norm_t(target_features)
+
     end_idx = find_end_idx(tokens)
     if idxs is None:
         idxs = range(1, end_idx)
@@ -147,21 +145,19 @@ def rank_token_impact(tokens, clip_model, idxs=None, target_features=None, norma
     if len(idxs) < 2:
         return [TokenImpact(1, 0)]
 
+    orig_score = calculator.score_tokens(target_features, tokens.view(1, -1))
     tokens = tokens.view(-1)
-
-    orig_diff = 1 - mathutils.cosine_sim(mathutils.norm_t(target_features), mathutils.norm_t(full_features)).item()
     impact_tuples = []
     total_impact = 0
     for idx in idxs:
         drop_tokens = torch.cat(
             (tokens[:idx], tokens[idx + 1 :], torch.zeros(1, device=tokens.device, dtype=tokens.dtype))
         )
-        split_features = clip_model.get_features(drop_tokens)[0]
-        cos_diff = 1 - (
-            orig_diff + mathutils.cosine_sim(mathutils.norm_t(target_features), mathutils.norm_t(split_features)).item()
-        )
-        total_impact += cos_diff
-        impact_tuples.append([cos_diff, idx])
+
+        score_loss = orig_score - calculator.score_tokens(target_features, drop_tokens)[0]
+
+        total_impact += score_loss
+        impact_tuples.append([score_loss, idx])
 
     if normalize and total_impact != 0:
         for idx in range(len(impact_tuples)):
@@ -170,7 +166,9 @@ def rank_token_impact(tokens, clip_model, idxs=None, target_features=None, norma
     return [TokenImpact(*impact) for impact in impact_tuples]
 
 
-def trim_prompt(prompt, clip_model, max_to_remove=sdconsts.prompt_token_len, thresh=0.1, orig_features=None):
+def trim_prompt(
+    prompt, clip_model, max_to_remove=sdconsts.prompt_token_len, calculator=None, thresh=0.1, orig_features=None
+):
     if isinstance(prompt, torch.Tensor):
         prompt = decode_tokens(prompt)
     if not prompt:
@@ -179,10 +177,15 @@ def trim_prompt(prompt, clip_model, max_to_remove=sdconsts.prompt_token_len, thr
     next_prompt = curr_prompt
     net_impact = 0
     iter_num = 0
+    if calculator is None:
+
+        from ai.stabledisco.decoderpipeline.promptmetrics import ClipCalculator
+
+        calculator = ClipCalculator(clip_model)
     while net_impact < thresh and next_prompt and iter_num < max_to_remove:
         curr_prompt = next_prompt
 
-        last_impact = rank_word_impact(curr_prompt, clip_model, orig_features=orig_features)
+        last_impact = rank_word_impact(curr_prompt, clip_model, calculator, orig_features=orig_features)
         if not last_impact:
             return ""
         last_impact, _, next_prompt = last_impact[-1]

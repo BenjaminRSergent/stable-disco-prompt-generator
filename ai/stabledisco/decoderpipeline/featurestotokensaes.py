@@ -10,7 +10,6 @@ import torch.nn as nn
 from ai.stabledisco.decoderpipeline.knowledgetransfernetwork import KnowledgeTransferNetwork
 from ai.stabledisco.decoderpipeline.lowerfeaturelayers import LowerFeatureLayers
 from clip.clip import _tokenizer as clip_tokenizer
-
 from ai.torchmodules.layers.basiclayers import Normalization
 
 
@@ -313,6 +312,18 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         idx=-1,
         allow_end=False,
     ):
+        if rev_tokens is not None:
+            return self.get_two_way_probs(
+                memory,
+                tokens,
+                rev_memory,
+                rev_tokens,
+                idx,
+                ascii_only=ascii_only,
+                no_banned=no_banned,
+                custom_mask=custom_mask,
+                allow_end=allow_end,
+            )
         num_batch = tokens.size(0)
         size = tokens.size(1)
         if size == self._seq_len - 1:
@@ -332,56 +343,35 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
             tgt_key_padding_mask=(tokens == 0),
         )
 
-        batch_idxs = torch.arange(num_batch, device=self._device, dtype=torch.long)
-
-        if rev_tokens is None:
-            vocab_out = self._vocab_out(decoder_out[:, -1])
-            vocab_out[batch_idxs, tokens[:, -1].long()] /= 2
-        else:
-            rev_tgt = self._token_embedding(rev_tokens) + self._positional_embedding
-            rev_decoder_out = self._rev_decoder(
-                memory=rev_memory,
-                tgt=rev_tgt,
-                tgt_mask=self._target_mask,
-                tgt_key_padding_mask=(rev_tokens == 0),
-            )
-            rev_decoder = sdutils.rev_based_on_tokens(tokens, rev_decoder_out)
-            full_out = torch.cat((decoder_out, rev_decoder), dim=-1)
-            hidden = self._two_way_hidden(full_out)
-            vocab_out = self._two_way_vocab_out(hidden)
-            vocab_out = vocab_out[:, idx, :].squeeze(1)
-
-            vocab_out[batch_idxs, rev_tokens[:, -1].long()] /= 2
-            vocab_out[batch_idxs, tokens[:, -1].long()] /= 2
+        vocab_out = self._vocab_out(decoder_out[:, -1])
 
         probs = torch.softmax(vocab_out, dim=-1)
+
         if custom_mask is not None:
             probs *= custom_mask
         elif ascii_only or no_banned:
             probs *= self.get_mask(ascii_only, no_banned)
 
         if not allow_end:
-            probs[:, -1] = 0
-            probs[:, -2] = 0
+            probs[:, -1] = -1
+            probs[:, -2] = -1
 
         return probs
 
     def get_two_way_probs(
         self,
         memory,
-        rev_memory,
         tokens,
+        rev_memory,
         rev_tokens,
+        idx,
         ascii_only=True,
         no_banned=True,
         custom_mask=None,
+        allow_end=False,
     ):
         num_batch = tokens.size(0)
         size = tokens.size(1)
-        if size == self._seq_len - 1:
-            probs = torch.zeros(len(clip_tokenizer.encoder), device=self._device)
-            probs[sdconsts.eot_token] = 1
-            return probs.repeat((tokens.shape[0], 1))
 
         curr_embedded = self._clip_model.token_embedding(tokens)
         curr_embedded = curr_embedded + self._clip_model.positional_embedding[:size]
@@ -394,6 +384,7 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
             tgt_mask=self._target_mask[:size, :size],
             tgt_key_padding_mask=(tokens == 0),
         )
+
         rev_tgt = self._token_embedding(rev_tokens) + self._positional_embedding
         rev_decoder_out = self._rev_decoder(
             memory=rev_memory,
@@ -405,12 +396,22 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         full_out = torch.cat((decoder_out, rev_decoder), dim=-1)
         hidden = self._two_way_hidden(full_out)
         vocab_out = self._two_way_vocab_out(hidden)
+        vocab_out = vocab_out[:, idx, :].squeeze(1)
 
         probs = torch.softmax(vocab_out, dim=-1)
+
+        batch_idxs = torch.arange(num_batch, device=self._device, dtype=torch.long)
+        probs[batch_idxs, rev_tokens[:, -1].long()] = 0
+        probs[batch_idxs, tokens[:, -1].long()] = 0
+
         if custom_mask is not None:
             probs *= custom_mask
         elif ascii_only or no_banned:
             probs *= self.get_mask(ascii_only, no_banned)
+
+        if not allow_end:
+            probs[:, -1] = -1
+            probs[:, -2] = -1
 
         return probs
 
@@ -455,8 +456,19 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         banned_words = [
             "erotic",
             "furry",
-            # "cyberpunk",
-            # "steampunk",
+            "cyberpunk",
+            "steampunk",
+            # "skull",
+            "0",
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "8",
+            "9",
             "cp",
             "jpg",
             "nude",
@@ -470,21 +482,13 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
             "anus",
             "ass",
             "butt",
-            "0",
-            "1",
-            "2",
-            "3",
-            "4",
-            "5",
-            "6",
-            "7",
-            "8",
-            "9",
             "chubby",
             "cake",
             "sweet",
             "fat",
         ]
+        """
+        """
         for word in banned_words:
             banned_mask[clip_tokenizer.encoder[word + "</w>"]] = 0
 

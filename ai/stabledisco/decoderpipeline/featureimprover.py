@@ -23,6 +23,9 @@ class FeatureImprover:
             target_features = self._to_rating_model.improve_rating(
                 target_features, max_diff=max_rating_diff, target_rating=target_rating, verbose=verbose
             ).view(1, -1)
+            target_features = self._is_text_model.improve_text_prob(
+                target_features, target_prob=target_prob, max_diff=max_prob_diff / 2, verbose=verbose
+            ).view(1, -1)
 
             if verbose:
                 before_prob = self._is_text_model.get_text_prob(orig_features)

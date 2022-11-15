@@ -7,8 +7,8 @@ from ai.stabledisco.clipmodel import ClipModel
 
 
 class MetricsCalculator(abc.ABC):
-    def rank(self, target_features, tokens, top_count):
-        scores = self.score_tokens(target_features, tokens)
+    def rank(self, target_features, tokens, top_count, **kwargs):
+        scores = self.score_tokens(target_features, tokens, **kwargs)
         top_scores, top_labels = scores.float().cpu().topk(top_count, dim=-1)
         top_tokens = [tokens[[top_labels][i].numpy()] for i in range(top_count)]
         top_scores = [top_scores[i].numpy() for i in range(top_count)]
@@ -16,12 +16,13 @@ class MetricsCalculator(abc.ABC):
         return top_tokens, top_scores
 
     def arg_sort(self, target_features, tokens, top_count):
-        scores = self.score_tokens(target_features, tokens)
+        with torch.no_grad():
+            scores = self.score_tokens(target_features, tokens)
 
-        top_labels = torch.argsort(scores, dim=-1)
-        top_scores = [scores[i] for i in range(top_count)]
+            top_labels = torch.argsort(scores, dim=-1)
+            top_scores = [scores[i] for i in range(top_count)]
 
-        return top_labels, top_scores
+            return top_labels, top_scores
 
     @abc.abstractmethod
     def score_tokens(self, target_features, tokens):
@@ -34,6 +35,7 @@ class ClipCalculator(MetricsCalculator):
         self._clip_model = clip_model
 
     def score_tokens(self, target_features, tokens):
+        target_features = target_features.view(1, -1)
         token_features = self._clip_model.features_from_tokens(tokens)
         return self._clip_model.cosine_similarity(target_features, token_features).unsqueeze(0)
 
@@ -68,32 +70,40 @@ class CombinedClipRatingCalculator(MetricsCalculator):
         self._target_rating = None
         self._min_target_rating = min_target_rating
 
-    def score_tokens(self, target_features, tokens, target_rating=None):
-        tokens = sdutils.change_rev(tokens, False).view(tokens.shape)
-        token_features = self._clip_model.features_from_tokens(tokens, verbosity=0)
-        # Reward a 0.055 increase in similarity the same as a 1.0 increase in rating at baseline.
-        # That scale roughly maps to typical values and changes during evolution
-        sim_step_scale = 0.02 / self._clip_weight
+    def score_tokens(self, target_features, tokens, target_sim=None, target_rating=None):
+        with torch.no_grad():
+            target_features = target_features.view(1, -1)
+            tokens = sdutils.change_rev(tokens, False).view(tokens.shape)
+            token_features = self._clip_model.features_from_tokens(tokens, verbosity=0)
+            # Reward a 0.055 increase in similarity the same as a 1.0 increase in rating at baseline.
+            # That scale roughly maps to typical values and changes during evolution
+            effective_clip_weight = self._clip_weight / 0.2
 
-        # Only look at top percent
-        # The typical starting point for a decent prompt is cosine sim 0.45
-        sim_floor = 0.5
-        sim_fitness = self._clip_model.cosine_similarity(target_features, token_features).unsqueeze(0)
-        sim_fitness = self._scale_fitness_linear(sim_fitness, mid_val=sim_floor, step=sim_step_scale, max_val=1.0)
+            # Only look at top percent
+            # The typical starting point for a decent prompt is cosine sim 0.45
 
-        # The typical starting point for a decent rating is 7.5
-        if target_rating is None:
-            target_rating = max(self._get_target_rating_for(target_features), self._min_target_rating)
+            if target_sim is None:
+                target_sim = 1.0
 
-        min_rating = 7.0
-        mid_rating = target_rating
-        max_rating = max(target_rating, 10)
-        rating_fitness = self._to_rating_model(token_features).unsqueeze(0)
-        rating_fitness = self._rating_weight * self._scale_fitness_decay(
-            rating_fitness, min_val=min_rating, mid_val=mid_rating, max_val=max_rating
-        )
+            sim_floor = 0.5
+            sim_fitness = self._clip_model.cosine_similarity(target_features, token_features).unsqueeze(0)
+            sim_fitness = effective_clip_weight * self._scale_fitness_decay(
+                sim_fitness, min_val=sim_floor, mid_val=target_sim, max_val=1.0
+            )
 
-        return sim_fitness + rating_fitness
+            # The typical starting point for a decent rating is 7.5
+            if target_rating is None:
+                target_rating = max(self._get_target_rating_for(target_features), self._min_target_rating)
+
+            min_rating = 7.0
+            mid_rating = target_rating
+            max_rating = max(target_rating, 10)
+            rating_fitness = self._to_rating_model(token_features).unsqueeze(0)
+            rating_fitness = self._rating_weight * self._scale_fitness_decay(
+                rating_fitness, min_val=min_rating, mid_val=mid_rating, max_val=max_rating
+            )
+
+            return sim_fitness + rating_fitness
 
     @lru_cache(maxsize=32)
     def _get_target_rating_for(self, target_features):

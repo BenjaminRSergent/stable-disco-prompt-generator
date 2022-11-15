@@ -43,6 +43,13 @@ def estimate_validation(
     con_low_change = 0
     print_freq = 10
     highest_reset = 0
+    device = None
+    for dev_var in ["device", "_device"]:
+        if dev_var in model.__dict__:
+            device = model.__dict__[dev_var]
+    if device is None:
+        device = torchutils.get_default_device()
+
     with torch.no_grad():
         loss = 0
 
@@ -51,7 +58,7 @@ def estimate_validation(
                 torchutils.dict_to_device(data)
                 loss += model.calc_loss(**data)
             else:
-                data = (data[0].to(model.device, non_blocking=True), data[1].to(model.device, non_blocking=True))
+                data = (data[0].to(device, non_blocking=True), data[1].to(device, non_blocking=True))
                 loss += model.calc_loss(*data)
 
             if idx % check_freq == 0:
@@ -79,4 +86,4 @@ def estimate_validation(
 
             if idx >= max_batches:
                 break
-        return (loss / idx + 1).cpu().item()
+        return curr_loss

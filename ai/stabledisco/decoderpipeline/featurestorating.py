@@ -110,13 +110,13 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
             return top_words, top_ratings
 
     def improve_rating(
-        self, features, target_rating=9.0, max_diff=0.05, per_step=1e-3, alpha=0.85, max_divs=200, verbose=False
+        self, features, target_rating=9.0, max_diff=0.05, per_step=1e-1, alpha=0.75, max_divs=200, verbose=False
     ):
         with torch.no_grad():
             if len(features.shape) == 1:
                 features = features.view(1, -1)
             features = features / features.norm(dim=-1, keepdim=True)
-            before_rating = self.get_rating(features)
+            before_rating = self.get_rating(features)[0]
             if before_rating >= target_rating:
                 return features
             out_features = torch.clone(features)
@@ -143,7 +143,7 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
                 out_features += per_step * dx_norm
                 out_features = out_features / out_features.norm(dim=-1, keepdim=True)
 
-                mid_rating = self.get_rating(out_features)
+                mid_rating = self.get_rating(out_features)[0]
 
                 cosine_change = abs(1.0 - (features.unsqueeze(0) @ out_features.T))
 
@@ -153,7 +153,7 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
                     best_out_score = mid_rating
                     best_out_features = out_features.clone()
 
-                if cosine_change > max_diff:
+                if cosine_change >= max_diff:
                     out_features = prev_out_features
                     cosine_change = 0
                     per_step *= alpha
@@ -161,11 +161,12 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
                     con_better = 0
                 else:
                     con_better += 1
-                    if con_better > 3:
+                    if con_better > 4:
                         per_step /= alpha
 
             if verbose:
                 cosine_change = abs(1.0 - (features.unsqueeze(0) @ best_out_features.T))
+                print("Divs", num_divs)
                 print("End Rating", best_out_score)
                 print("Cosine Diff of New Features", cosine_change)
 
