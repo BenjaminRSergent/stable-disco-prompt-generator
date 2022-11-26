@@ -77,7 +77,7 @@ class CombinedClipRatingCalculator(MetricsCalculator):
             token_features = self._clip_model.features_from_tokens(tokens, verbosity=0)
             # Reward a 0.055 increase in similarity the same as a 1.0 increase in rating at baseline.
             # That scale roughly maps to typical values and changes during evolution
-            effective_clip_weight = self._clip_weight / 0.2
+            effective_clip_weight = self._clip_weight
 
             # Only look at top percent
             # The typical starting point for a decent prompt is cosine sim 0.45

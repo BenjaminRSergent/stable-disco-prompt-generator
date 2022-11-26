@@ -36,6 +36,8 @@ from ai.stabledisco.utils.promptutils import (
     is_rev_tokens,
     add_text_features,
     add_features,
+    get_all_syn_reps,
+    get_synonyms,
     rank_word_impact,
     rank_token_impact,
     trim_prompt,

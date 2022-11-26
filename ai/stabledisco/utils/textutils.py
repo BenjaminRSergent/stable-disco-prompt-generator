@@ -1,6 +1,6 @@
 import numpy as np
 import torch
-from clip.clip import _tokenizer as clip_tokenizer
+from open_clip.tokenizer import _tokenizer as clip_tokenizer
 
 
 def decode_clip_tokens(tokens):
@@ -12,7 +12,7 @@ def decode_clip_tokens(tokens):
         tokens = tokens.view(1, *tokens.shape)
 
     texts = [clip_tokenizer.decode(toks[1:].cpu().numpy()) for toks in tokens]
-    ends = [text.find("<|endoftext|>") for text in texts]
+    ends = [text.find("<end_of_text>") for text in texts]
     for idx in range(len(texts)):
         if ends[idx] != -1:
             texts[idx] = texts[idx][: ends[idx]]

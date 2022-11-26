@@ -1,5 +1,4 @@
 import ai.stabledisco.constants as sdconsts
-from ai.stabledisco.decoderpipeline.lowerfeaturelayers import LowerFeatureLayers
 import ai.stabledisco.utils as sdutils
 import ai.torchmodules as torchmodules
 import ai.torchmodules.layers as torchlayers
@@ -11,7 +10,7 @@ from ai.stabledisco.decoderpipeline.knowledgetransfernetwork import KnowledgeTra
 
 
 class FeaturesToRatingModel(torchmodules.BaseModel):
-    name = "FeaturesToRatingV9"
+    name = "FeaturesToRatingV10"
 
     @staticmethod
     def build_teacher(**kwargs):
@@ -38,10 +37,10 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
         min_lr_divisor=6,
         num_res_blocks=4,
         res_unit_mul=4,
-        res_layers=4,
+        res_layers=6,
         units_div=1.5,
-        dropout_div=1.5,
-        start_dropout=0.5,
+        dropout_div=1.25,
+        start_dropout=0.4,
         epoch_batches=8214,
         step_size_up_epoch_mul=2,
         warmup_period_epoch_mul=1,
@@ -50,6 +49,48 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
         device=None,
     ):
         super().__init__(FeaturesToRatingModel.name + name_suffix, device=device)
+        self._bin_scales = torch.tensor(
+            [
+                0.8927,
+                0.8134,
+                0.8475,
+                0.8758,
+                0.9005,
+                0.9209,
+                0.9377,
+                0.9516,
+                0.9626,
+                0.9717,
+                0.9787,
+                0.9842,
+                0.9884,
+                0.9918,
+                0.9943,
+                0.9960,
+                0.9973,
+                0.9982,
+                0.9988,
+                0.9992,
+                0.9995,
+                0.9997,
+                0.9998,
+                0.9999,
+                0.9999,
+                1.0000,
+                1.0000,
+                1.0000,
+                1.0000,
+                1.0000,
+                1.0000,
+                1.0000,
+                1.0000,
+                1.0000,
+                1.0000,
+                1.0000,
+            ],
+            device=self._device,
+            requires_grad=True,
+        )
 
         self._res_stack = torchlayers.ReducingResDenseStack(
             sdconsts.feature_width,
@@ -82,9 +123,18 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
         )
 
     def _calc_batch_loss(self, x_inputs, y_targets):
+        return self._calc_loss(self(x_inputs), y_targets)
+
+    def _calc_loss(self, outputs, y_targets):
         with torch.autocast(device_type="cuda"):
-            outputs = self(x_inputs)
-            return self._loss_func(outputs.view(-1), y_targets.view(-1))
+            rating_bins = self._get_rating_bin(y_targets)
+            scales = self._bin_scales[rating_bins]
+            raw_loss = (scales * (outputs.view(-1) - y_targets.view(-1))) ** 2
+
+            return torch.mean(raw_loss)
+
+    def _get_rating_bin(self, ratings: torch.Tensor, step=0.1, min_rating=7, eps=0.001):
+        return ((ratings - (min_rating - eps)) / step).to(torch.long)
 
     def forward(self, features):
         x = features / features.norm(dim=-1, keepdim=True)
@@ -110,7 +160,7 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
             return top_words, top_ratings
 
     def improve_rating(
-        self, features, target_rating=9.0, max_diff=0.05, per_step=1e-1, alpha=0.75, max_divs=200, verbose=False
+        self, features, target_rating=9.0, max_diff=0.05, per_step=1e-6, alpha=0.75, max_divs=400, verbose=False
     ):
         with torch.no_grad():
             if len(features.shape) == 1:
@@ -128,7 +178,7 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
             best_out_score = before_rating
 
             def get_adjusted_rating(other):
-                return self.get_rating(other) + sdutils.cosine_sim(features, other)
+                return self.get_rating(other) / 7 + sdutils.cosine_sim(features, other)
 
             con_better = 0
             num_divs = 0
@@ -156,12 +206,17 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
                 if cosine_change >= max_diff:
                     out_features = prev_out_features
                     cosine_change = 0
-                    per_step *= alpha
+                    if num_divs % 2 == 0:
+                        per_step *= alpha
+                    else:
+                        per_step /= alpha**2
+
                     num_divs += 1
                     con_better = 0
                 else:
                     con_better += 1
-                    if con_better > 4:
+                    if con_better > 3:
+
                         per_step /= alpha
 
             if verbose:

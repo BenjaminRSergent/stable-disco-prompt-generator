@@ -9,12 +9,34 @@ import ai.torchmodules.utils as torchutils
 import clip
 import torch
 
-from clip.clip import _tokenizer as clip_tokenizer
+from open_clip.tokenizer import _tokenizer as clip_tokenizer
 
 import utils
 
+from nltk.corpus import wordnet
+
 WordImpact = namedtuple("WordImpact", "impact word prompt")
 TokenImpact = namedtuple("TokenImpact", "impact idx")
+
+
+def get_synonyms(word):
+    syn_set = wordnet.synsets(word)
+    all_syn = set()
+    for syn in syn_set:
+        all_syn.update(syn.lemma_names())
+
+    return [word.replace("_", " ") for word in all_syn]
+
+
+def get_all_syn_reps(sent):
+    split = sent.split(" ")
+
+    ret = []
+    for idx, word in enumerate(split):
+        for syn in get_synonyms(word):
+            ret.append(" ".join(split[:idx] + [syn] + split[idx + 1 :]))
+
+    return ret
 
 
 def random_prompt_combo(prompts, length=77, device=None):
@@ -105,7 +127,7 @@ def is_rev_tokens(text_tokens):
 
 def rank_word_impact(prompt, clip_model, calculator, idxs=None, orig_features=None, normalize=True):
     # Add spaces between punctuation and numbers
-    prompt = decode_tokens(clip.tokenize(prompt)[0])[0]
+    prompt = decode_tokens(clip.tokenize(prompt, truncate=True)[0])[0]
     full_features = clip_model.get_features(prompt)[0]
     if orig_features is None:
         orig_features = full_features
@@ -115,7 +137,7 @@ def rank_word_impact(prompt, clip_model, calculator, idxs=None, orig_features=No
     if idxs is None:
         idxs = range(1, end_idx)
 
-    orig_score = calculator.score_tokens(orig_features, clip.tokenize(prompt).cuda())
+    orig_score = calculator.score_tokens(orig_features, clip.tokenize(prompt, truncate=True).cuda())
     impact_tuples = []
     total_impact = 0
     for idx in idxs:
@@ -205,8 +227,8 @@ def decode_tokens(tokens):
 
     texts = [clip_tokenizer.decode(toks.cpu().numpy()) for toks in tokens]
     for idx in range(len(texts)):
-        texts[idx] = texts[idx].replace("<|startoftext|>", "")
-        end_idx = texts[idx].find("<|endoftext|>")
+        texts[idx] = texts[idx].replace("<start_of_text>", "")
+        end_idx = texts[idx].find("<end_of_text>")
 
         if end_idx != -1:
             texts[idx] = texts[idx][:end_idx]

@@ -7,7 +7,7 @@ from ai.stabledisco import decoderpipeline
 from ai.stabledisco.clipmodel import ClipModel
 from ai.stabledisco.decoderpipeline.featurestorating import FeaturesToRatingModel
 from ai.stabledisco.decoderpipeline.featurestotokensaes import FeaturesToTokensAesModel
-from clip.clip import _tokenizer as clip_tokenizer
+from open_clip.tokenizer import _tokenizer as clip_tokenizer
 import copy
 
 
@@ -18,14 +18,14 @@ class UpgradeConfig:
         upgrade_iter_start=10,
         upgrade_threshold=7,
         cap_margin=4,
-        rating_weight=0.5,
+        upgrade_rating_weight=0.5,
         verbose=True,
     ):
         self.baseline_cands = baseline_cands
         self.upgrade_iter_start = upgrade_iter_start
         self.upgrade_threshold = upgrade_threshold
         self.cap_margin = cap_margin
-        self.rating_weight = rating_weight
+        self.upgrade_rating_weight = upgrade_rating_weight
         self.verbose = verbose
 
 
@@ -164,7 +164,7 @@ class BeamSearcherFactory:
         return self
 
     def upgrade_rating_weight(self, upgrade_rating_weight):
-        self._upgrade_config.rating_weight = upgrade_rating_weight
+        self._upgrade_config.upgrade_rating_weight = upgrade_rating_weight
         return self
 
     def device(self, device):
@@ -172,7 +172,7 @@ class BeamSearcherFactory:
         return self
 
     def max_upgrade_cands(self, cands):
-        self.baseline_cands = cands
+        self._upgrade_config.baseline_cands = cands
         return self
 
     def upgrade_iter_start(self, start_iter):
@@ -326,7 +326,9 @@ class BeamSearcher:
 
         upgrader_factory = decoderpipeline.PromptUpgraderFactory(self._tokens_model, self._ratings_model, clip_model)
         upgrader_factory.rating_weight(self._search_config.rating_weight)
-        upgrader_factory.target_rating(0).target_sim(self._search_config.target_sim)
+        upgrader_factory.target_rating(self._upgrade_config.upgrade_rating_weight).target_sim(
+            self._search_config.target_sim
+        )
         self._upgrader = upgrader_factory.verbose(self._upgrade_config.verbose).build()
 
     def beam_search(self, features, max_len=75, topk=1, start_tokens=None, print_freq=1):
@@ -453,10 +455,7 @@ class BeamSearcher:
                 end_idx=1 + self._upgrade_config.cap_margin,
             )
 
-            for div in [4, 4, 2, 1]:
-                new_beam, _ = self._upgrader.replace_tokens(
-                    state=state, num_candidates=curr_cands // div, decay_factor=1.0
-                )
+            new_beam, _ = self._upgrader.replace_tokens(state=state, num_candidates=curr_cands, decay_factor=1.0)
 
             search_state.curr_beams.append((candidates[top_beam_idxs[0]].prob, new_beam[:beam_eot_idx].clone()))
             top_beam = new_beam

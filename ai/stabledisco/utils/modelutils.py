@@ -32,20 +32,20 @@ def load_sd_model_from_config(config, ckpt, verbose=False):
 
 def load_default_sd_model(sd_dir=None):
     if sd_dir is None:
-        sd_dir = "/home/ubuntu/development/stable-diffusion"
-    sd_config = "configs/stable-diffusion/v1-inference.yaml"
+        sd_dir = "/home/ubuntu/development/stablediffusion"
+    sd_config = "configs/stable-diffusion/v2-inference-v.yaml"
     config_path = os.path.join(sd_dir, sd_config)
 
-    ckpt = "models/ldm/stable-diffusion-v1/model.ckpt"
+    ckpt = "models/ldm/stable-diffusion-v2/model.ckpt"
 
     return load_sd_model(config_path, ckpt)
 
 
 def load_sd_model(sd_config, ckpt, sd_dir=None):
     if sd_dir is None:
-        sd_dir = "/home/ubuntu/development/stable-diffusion"
+        sd_dir = "/home/ubuntu/development/stablediffusion"
     # sd_config = "configs/latent-diffusion/txt2img-1p4B-eval.yaml"
-    sd_config = "configs/stable-diffusion/v1-inference.yaml"
+    sd_config = "configs/stable-diffusion/v2-inference-v.yaml"
     config = OmegaConf.load(os.path.join(sd_dir, sd_config))
     return load_sd_model_from_config(
         config,

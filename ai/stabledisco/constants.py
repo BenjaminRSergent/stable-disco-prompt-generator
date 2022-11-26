@@ -1,9 +1,9 @@
-from clip.clip import _tokenizer as clip_tokenizer
+from open_clip.tokenizer import _tokenizer as clip_tokenizer
 
 feature_width = 768
 
 pruned_expander_out = 5202
-sot_token = clip_tokenizer.encoder["<|startoftext|>"]
-eot_token = clip_tokenizer.encoder["<|endoftext|>"]
+sot_token = clip_tokenizer.encoder["<start_of_text>"]
+eot_token = clip_tokenizer.encoder["<end_of_text>"]
 num_tokens = len(clip_tokenizer.encoder)
 prompt_token_len = 77

@@ -76,7 +76,7 @@ def make_prompt(
     scale=7.5,
     steps=100,
     ddim_eta=0.0,
-    plms=True,
+    plms=False,
     iters=1,
     downscale=8,
     batch_size=1,
@@ -86,6 +86,7 @@ def make_prompt(
     if type(prompts) == str:
         prompts = [prompts]
 
+    
     sampler = model.create_sampler(plms)
 
     data = sum([[batch_size * [prompt] for prompt in prompts]], [])
@@ -102,6 +103,7 @@ def make_prompt(
                         if scale != 1.0:
                             uc = model.get_unconditional_conditioning(batch_size)
                         c = model.get_learned_conditioning(prompt)
+                        
 
                         shape = [
                             latient_channels,

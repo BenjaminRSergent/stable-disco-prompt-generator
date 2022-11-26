@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 from ai.stabledisco.decoderpipeline.knowledgetransfernetwork import KnowledgeTransferNetwork
 from ai.stabledisco.decoderpipeline.lowerfeaturelayers import LowerFeatureLayers
-from clip.clip import _tokenizer as clip_tokenizer
+from open_clip.tokenizer import _tokenizer as clip_tokenizer
 from ai.torchmodules.layers.basiclayers import Normalization
 
 
@@ -291,8 +291,8 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
 
         texts = [clip_tokenizer.decode(toks.cpu().numpy()) for toks in tokens]
         for idx in range(len(texts)):
-            texts[idx] = texts[idx].replace("<|startoftext|>", "")
-            end_idx = texts[idx].find("<|endoftext|>")
+            texts[idx] = texts[idx].replace("<start_of_text>", "")
+            end_idx = texts[idx].find("<end_of_text>")
 
             if end_idx != -1:
                 texts[idx] = texts[idx][:end_idx]
@@ -441,10 +441,15 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         num_ascii = 0
         for token in clip_tokenizer.decoder.keys():
             text = clip_tokenizer.decode([token])
-            is_ascii = norm_char_regex.match(text) and " " in text or "</w>" in text
-            # is_ascii =  (norm_char_regex.match(text) is not None) and ' ' in text[-1]
+            is_ascii = norm_char_regex.match(text)  # and " " in text or "</w>" in text
+            has_space = " " in text[-1]
+            # Only allow a and i as single letter words
+            is_not_letter = len(text) > 2 or (text[0] == "a" or text[0] == "i")
+            not_short = len(text) > 3
 
-            if is_ascii:
+            do_use = is_ascii and ((is_not_letter and has_space) or not_short)
+
+            if do_use:
                 num_ascii += 1
             else:
                 ascii_mask[token] = 0
@@ -458,6 +463,7 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
             "furry",
             "cyberpunk",
             "steampunk",
+            "minecraft",
             # "skull",
             "0",
             "1",
@@ -470,7 +476,7 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
             "8",
             "9",
             "cp",
-            "jpg",
+            # "jpg",
             "nude",
             "naked",
             "kid",
@@ -482,10 +488,10 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
             "anus",
             "ass",
             "butt",
-            "chubby",
-            "cake",
-            "sweet",
-            "fat",
+            # "chubby",
+            # "cake",
+            # "sweet",
+            # "fat",
         ]
         """
         """

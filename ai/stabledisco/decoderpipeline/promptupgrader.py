@@ -7,7 +7,7 @@ import clip
 import torch
 from ai.stabledisco.clipmodel import ClipModel
 from ai.stabledisco.decoderpipeline.promptmetrics import CombinedClipRatingCalculator
-from clip.clip import _tokenizer as clip_tokenizer
+from open_clip.tokenizer import _tokenizer as clip_tokenizer
 
 all_tokens_cnt = len(clip_tokenizer.encoder)
 half_tokens_cnt = all_tokens_cnt // 2
@@ -318,7 +318,11 @@ class PromptUpgrader:
             target_features, tokens, target_sim=self._config.target_sim, target_rating=self._config.target_rating
         )[0].item()
 
-        return PromptUpgrader.PromptState(self, target_features, memory, rev_memory, tokens, curr_best_score)
+        state = PromptUpgrader.PromptState(self, target_features, memory, rev_memory, tokens, curr_best_score)
+
+        self._print_result(state.target_features, tokens, state.curr_best_score, result_prefix="Initial prompt")
+
+        return state
 
     def upgrade(
         self, candidate_cnt=1024, max_tokens=sdconsts.prompt_token_len, target_features=None, prompt=None, state=None
@@ -331,9 +335,6 @@ class PromptUpgrader:
             if self._has_hit_target(state):
                 self._verbose_print("Input prompt's sim and rating already hits the targets, nothing to do")
                 return state.get_best(True)
-
-            tokens = state.best_tokens
-            self._print_result(state.target_features, tokens, state.curr_best_score, result_prefix="Initial prompt")
 
             min_cands = int(candidate_cnt / self._config.cand_mul)
             max_cands = min(int(candidate_cnt * self._config.cand_mul), self._config.max_cands)
@@ -352,6 +353,7 @@ class PromptUpgrader:
         # Tokens get added either after the triming or at the end based on "add_first". Only add
         # half of the required tokens to allow room for inserting more after other upgrades.
         self._verbose_print("Running initial upgrade pass and insertions")
+        self.replace_synonyms(state=state)
         self.remove_tokens(state=state)
         end_idx = state.get_end_idx()
         if self._config.add_first:
@@ -375,6 +377,8 @@ class PromptUpgrader:
         if not self._config.add_first:
             self.add_tokens(pass_cands=min_cands, max_tokens=(max_tokens + end_idx) / 2 - 2, state=state)
 
+        self.replace_synonyms(state=state)
+
     def _core_upgrade_pass(self, state, min_cands, max_cands, max_tokens):
         # Iterative replace tokens following by adding, trimming and readding tokens.
         self._verbose_print("Running core replacement passes")
@@ -390,6 +394,8 @@ class PromptUpgrader:
         self.replace_tokens(max_cands, state=state)
         self.remove_tokens(state=state)
         self.add_tokens(pass_cands=min_cands, max_tokens=max_tokens, state=state)
+
+        self.replace_synonyms(state=state)
 
     def _final_upgrade_pass(self, state, min_cands, max_cands, max_tokens):
         # A large replacement fast followed by another iterative replacement loop.
@@ -415,6 +421,33 @@ class PromptUpgrader:
         self.remove_tokens(state=state)
         self.add_tokens(pass_cands=min_cands, max_tokens=max_tokens, state=state)
         self.replace_tokens(num_candidates=max_cands, state=state)
+        self.replace_synonyms(state=state)
+
+    def replace_synonyms(self, max_cycles=sdconsts.prompt_token_len, target_features=None, prompt=None, state=None):
+        with torch.no_grad():
+            if not state:
+                state = self.create_state(target_features, prompt)
+            state.push_rev_ret()
+
+            with state.batch():
+                for curr_cycle in range(max_cycles):
+                    prompt = sdutils.decode_tokens(state.get_tokens())[0]
+                    to_test = clip.tokenize(sdutils.get_all_syn_reps(prompt), truncate=True).cuda()
+                    test_stack = torch.stack(tuple(to_test))
+                    top_tokens, top_sim = self._calculator.rank(
+                        state.target_features,
+                        test_stack,
+                        1,
+                        target_sim=self._config.target_sim,
+                        target_rating=self._config.target_rating,
+                    )
+
+                    if not state.update_tokens_if_better(top_tokens[0][0], top_sim[0]):
+                        break
+
+                self._verbose_print(f"{curr_cycle} synonym replacements")
+
+            return state.get_best(True)
 
     def replace_tokens(
         self,
@@ -465,7 +498,7 @@ class PromptUpgrader:
                 thresh=self._config.removal_sim_thresh,
                 orig_features=state.target_features,
             )
-            trimmed_tokens = clip.tokenize(trimmed_prompt)[0].cuda()
+            trimmed_tokens = clip.tokenize(trimmed_prompt, truncate=True)[0].cuda()
             trimmed_score = self._calculator.score_tokens(
                 state.target_features,
                 trimmed_tokens,
@@ -552,10 +585,7 @@ class PromptUpgrader:
             tokens[curr_end + 1 :] = tokens[curr_end:-1].clone()
             tokens[curr_end] = 0
 
-            curr_end_idx = sdutils.find_end_idx(tokens)
             rev_tokens = sdutils.change_rev(tokens, False)[0]
-
-            rev_idx = max(curr_end_idx - curr_end, 1)
 
             replacement_probs = self._tokens_model.get_next_probs(
                 memory=state.memory,

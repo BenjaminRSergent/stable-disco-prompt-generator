@@ -223,6 +223,7 @@ class ClipModel(torch.nn.Module):
         x = self._model.ln_final(x).type(self._model.dtype)
         x = x.permute(1, 0, 2)[end_idx]
         x = x
+        
 
         # x = x[idxs, arg_maxs]
         x = x @ self._model.text_projection
