@@ -7,6 +7,7 @@ import ai.stabledisco.constants as sdconsts
 import ai.stabledisco.utils.mathutils as mathutils
 import ai.torchmodules.utils as torchutils
 import clip
+import open_clip
 import torch
 
 from open_clip.tokenizer import _tokenizer as clip_tokenizer
@@ -40,7 +41,7 @@ def get_all_syn_reps(sent):
 
 
 def random_prompt_combo(prompts, length=77, device=None):
-    tokens_set = set(sum([clip.tokenize(prompt, truncate=True)[0].tolist() for prompt in prompts], []))
+    tokens_set = set(sum([open_clip.tokenize(prompt)[0].tolist() for prompt in prompts], []))
 
     tokens_set.remove(sdconsts.sot_token)
     tokens_set.remove(sdconsts.eot_token)
@@ -71,7 +72,7 @@ def find_end_idx(tokens):
 
 
 def get_single_word_token(word):
-    tokenized = clip.tokenize(word)[0]
+    tokenized = open_clip.tokenize(word)[0]
     if tokenized[2].item() != sdconsts.eot_token:
         raise Exception(f"Input {word} consists of multiple tokens {tokenized}")
     return tokenized[1].item()
@@ -127,7 +128,7 @@ def is_rev_tokens(text_tokens):
 
 def rank_word_impact(prompt, clip_model, calculator, idxs=None, orig_features=None, normalize=True):
     # Add spaces between punctuation and numbers
-    prompt = decode_tokens(clip.tokenize(prompt, truncate=True)[0])[0]
+    prompt = decode_tokens(open_clip.tokenize(prompt)[0])[0]
     full_features = clip_model.get_features(prompt)[0]
     if orig_features is None:
         orig_features = full_features
@@ -137,12 +138,12 @@ def rank_word_impact(prompt, clip_model, calculator, idxs=None, orig_features=No
     if idxs is None:
         idxs = range(1, end_idx)
 
-    orig_score = calculator.score_tokens(orig_features, clip.tokenize(prompt, truncate=True).cuda())
+    orig_score = calculator.score_tokens(orig_features, open_clip.tokenize(prompt).cuda())
     impact_tuples = []
     total_impact = 0
     for idx in idxs:
         drop_prompt = " ".join(split_prompt[:idx] + split_prompt[idx + 1 :])
-        score_loss = orig_score - calculator.score_tokens(orig_features, clip.tokenize(drop_prompt).cuda())
+        score_loss = orig_score - calculator.score_tokens(orig_features, open_clip.tokenize(drop_prompt).cuda())
         total_impact += score_loss
         impact_tuples.append([score_loss, split_prompt[idx], drop_prompt])
 
@@ -200,10 +201,9 @@ def trim_prompt(
     net_impact = 0
     iter_num = 0
     if calculator is None:
-
         from ai.stabledisco.decoderpipeline.promptmetrics import ClipCalculator
-
         calculator = ClipCalculator(clip_model)
+        
     while net_impact < thresh and next_prompt and iter_num < max_to_remove:
         curr_prompt = next_prompt
 
@@ -243,7 +243,7 @@ def improve_url_features_sum(urls_to_use, clip_model, feature_improver, display_
 
 
 def calc_improved_prompt_features(base_prompts, clip_model, feature_improver, **kwargs):
-    features = tuple((clip_model.encode_text(prompt, truncate=True) for prompt in base_prompts))
+    features = tuple((clip_model.encode_text(prompt) for prompt in base_prompts))
     feature_stack = torch.stack(features).view((len(base_prompts), -1))
     return improve_feature_sum(feature_stack, feature_improver, **kwargs)
 

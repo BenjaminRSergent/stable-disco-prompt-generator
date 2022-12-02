@@ -12,7 +12,7 @@ class FeatureImprover:
     def improve_features_v2(
         self,
         orig_features,
-        alpha=0.9,
+        alpha=0.75,
         target_rating=9.0,
         target_prob=1.0,
         prob_scale=1.25,

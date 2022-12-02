@@ -14,7 +14,7 @@ from ai.torchmodules.layers.basiclayers import Normalization
 
 
 class FeaturesToTokensAesModel(torchmodules.BaseModel):
-    name = "FeaturesToTokensAesModelV5"
+    name = "FeaturesToTokensAesModelV7"
 
     @staticmethod
     def build_large(clip_model: nn.Module, freeze_embedding=True):
@@ -61,12 +61,14 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         name_suffix="",
         lower_dropout=0.1,
         upper_dropout=0.05,
-        block_mul=4,
-        heads=12,
-        layers=12,
+        block_mul=3,
+        res_unit_mul=3,
+        heads=16,
+        res_layers=6,
+        layers=8,
         decoder_mul=1.5,
         device=None,
-        freeze_embedding=True,
+        freeze_embedding=False,
     ):
         super().__init__(FeaturesToTokensAesModel.name + name_suffix, device=device)
 
@@ -74,7 +76,7 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         self._banned_mask = None
         self._bool_to_mask = {}
 
-        self._dtype = clip_model.dtype
+        self._dtype = torch.half
 
         self._clip_model = clip_model
 
@@ -86,30 +88,44 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         self._transformer_heads = heads
         self._transformer_layers = layers
 
-        self._token_embedding = nn.Embedding(sdconsts.num_tokens, sdconsts.feature_width)
+        upper_width = 1024
+        self._token_embedding = nn.Embedding(sdconsts.num_tokens, upper_width)
         self._token_embedding.weight.data = clip_model.token_embedding.weight.data.clone()
 
-        for param in self._clip_model.parameters():
+        for param in self._token_embedding.parameters():
             param.requires_grad = not freeze_embedding
 
-        self.register_buffer("_positional_embedding", clip_model.positional_embedding)
+        self.register_buffer("_positional_embedding", clip_model.positional_embedding[:, :upper_width])
 
-        self._feature_expander = LowerFeatureLayers(dropout=lower_dropout)
+        self._res_stack = torchlayers.ResDenseStack(
+            input_size=sdconsts.feature_width,
+            block_width=upper_width * res_unit_mul,
+            layers=res_layers,
+            dropout=lower_dropout,
+            activation=nn.LeakyReLU,
+        )
+        
+        dense_stack_units = [
+            (1, upper_width * 77),
+        ]
+
+        self.in_features = dense_stack_units[0][1]
+        self.out_features = dense_stack_units[-1][1]
 
         self._seq_expander = torchlayers.LinearWithActivation(
-            self._feature_expander.out_features,
-            self._seq_len * sdconsts.feature_width,
+            sdconsts.feature_width,
+            self._seq_len * upper_width,
             dropout=lower_dropout,
             batch_norm_type=None,
         )
 
-        self._seq_reshaper = torchlayers.Reshaper((-1, self._seq_len, sdconsts.feature_width))
-        self._pre_encode_ln = nn.LayerNorm(sdconsts.feature_width)
+        self._seq_reshaper = torchlayers.Reshaper((-1, self._seq_len, upper_width))
+        self._pre_encode_ln = nn.LayerNorm(upper_width)
 
-        block_width = int(sdconsts.feature_width * block_mul)
+        block_width = int(upper_width * block_mul)
         self._rev_encoder = nn.TransformerEncoder(
             nn.TransformerEncoderLayer(
-                d_model=sdconsts.feature_width,
+                d_model=upper_width,
                 nhead=self._transformer_heads,
                 dim_feedforward=block_width,
                 activation=torchlayers.QuickGELU(),
@@ -121,7 +137,7 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
 
         self._encoder = nn.TransformerEncoder(
             nn.TransformerEncoderLayer(
-                d_model=sdconsts.feature_width,
+                d_model=upper_width,
                 nhead=self._transformer_heads,
                 dim_feedforward=block_width,
                 activation=torchlayers.QuickGELU(),
@@ -133,7 +149,7 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
 
         self._decoder = nn.TransformerDecoder(
             nn.TransformerDecoderLayer(
-                d_model=sdconsts.feature_width,
+                d_model=upper_width,
                 nhead=self._transformer_heads,
                 dim_feedforward=block_width,
                 activation=torchlayers.QuickGELU(),
@@ -145,7 +161,7 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
 
         self._rev_decoder = nn.TransformerDecoder(
             nn.TransformerDecoderLayer(
-                d_model=sdconsts.feature_width,
+                d_model=upper_width,
                 nhead=self._transformer_heads,
                 dim_feedforward=block_width,
                 activation=torchlayers.QuickGELU(),
@@ -155,19 +171,19 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
             num_layers=int(self._transformer_layers * decoder_mul),
         )
 
-        dense_stack_units = [(2, 2 * sdconsts.feature_width)]
+        dense_stack_units = [(2, 2 * upper_width)]
         self._two_way_hidden = torchlayers.DenseStack(
-            2 * sdconsts.feature_width,
+            2 * upper_width,
             dense_stack_units,
             activation=nn.LeakyReLU,
             dropout=0,
-            batch_norm_type=Normalization.NormType.Layer,
+            batch_norm_type=Normalization.NormType.LAYER,
         )
 
-        self._two_way_vocab_out = torch.nn.Linear(2 * sdconsts.feature_width, sdconsts.num_tokens)
+        self._two_way_vocab_out = torch.nn.Linear(2 * upper_width, sdconsts.num_tokens)
         nn.init.xavier_uniform_(self._two_way_vocab_out.weight)
 
-        self._vocab_out = torch.nn.Linear(sdconsts.feature_width, sdconsts.num_tokens)
+        self._vocab_out = torch.nn.Linear(upper_width, sdconsts.num_tokens)
         nn.init.xavier_uniform_(self._vocab_out.weight)
 
         self._loss_func = nn.CrossEntropyLoss()
@@ -186,10 +202,11 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
 
         target_mask = nn.Transformer.generate_square_subsequent_mask(self._seq_len).cuda()
         self.register_buffer("_target_mask", target_mask)
+        target_mask_diag = torch.zeros_like(self._target_mask).cuda()
+        target_mask_diag[:-1, 1:].fill_diagonal_(float("-inf"))
+        self.register_buffer("_target_mask_diag", target_mask_diag)
 
     def initialize_student(self, teacher: nn.Module):
-        self._feature_expander = copy.deepcopy(teacher._feature_expander)
-        self._feature_expander.freeze()
 
         self._seq_expander = copy.deepcopy(teacher._seq_expander)
         for param in self._seq_expander.parameters():
@@ -203,7 +220,7 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
     def clone_forward_to_rev(self):
         self._rev_decoder = copy.deepcopy(self._decoder)
 
-    def _calc_batch_loss(self, features: torch.Tensor, tokens: torch.Tensor = None, rev_tokens: torch.Tensor = None):
+    def _calc_batch_loss(self, features: torch.Tensor, tokens: torch.Tensor = None, rev_tokens: torch.Tensor = None, forward_weight=0.75):
         with torch.autocast(device_type="cuda"):
             outputs = self(features=features, tokens=tokens, rev_tokens=rev_tokens)
 
@@ -213,7 +230,7 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
             if rev_tokens is None:
                 return self._calc_loss(outputs, tokens)
 
-            return (self._calc_loss(outputs[0], tokens) + self._calc_loss(outputs[1], tokens)) / 2
+            return forward_weight*self._calc_loss(outputs[0], tokens) + (1-forward_weight)*self._calc_loss(outputs[1], tokens)
 
     def _calc_loss(self, output, targets):
         if targets.dtype.is_floating_point:
@@ -226,14 +243,19 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
 
     def forward(self, features, tokens=None, rev_tokens=None):
         if isinstance(features, list):
-            features, tokens, rev_tokens = features
+            if len(features) == 3:
+                features, tokens, rev_tokens = features
+            else:
+                features, tokens = features
         features = features / features.norm(dim=-1, keepdim=True)
 
+        encoder_out = self.features_to_memory(features, include_rev=False)
+        """
         if rev_tokens is None:
             encoder_out = self.features_to_memory(features, include_rev=False)
         else:
             encoder_out, rev_encoder_out = self.features_to_memory(features, include_rev=True)
-
+        """
         tgt = self._token_embedding(tokens) + self._positional_embedding
         decoder_out = self._decoder(
             memory=encoder_out,
@@ -241,8 +263,15 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
             tgt_mask=self._target_mask,
             tgt_key_padding_mask=(tokens == 0),
         )
-        vocab_out = self._vocab_out(decoder_out)
-
+        
+        two_way_decoder_out = self._decoder(
+            memory=encoder_out,
+            tgt=tgt,
+            tgt_mask=self._target_mask,
+            tgt_key_padding_mask=(tokens == 0),
+        )
+        return self._vocab_out(decoder_out), self._two_way_vocab_out(two_way_decoder_out) 
+        """
         if rev_tokens is not None:
             rev_tgt = self._token_embedding(rev_tokens) + self._positional_embedding
             rev_decoder_out = self._rev_decoder(
@@ -255,13 +284,14 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
             return vocab_out, self._two_way_vocab_out(self._two_way_hidden(full_out))
 
         return vocab_out
+        """
 
     def features_to_memory(self, latent_img_features, include_rev=False, dtype=None):
         if not dtype:
             dtype = self._dtype
         # latent_img_features = latent_img_features.to(dtype)
-        latent_img_features = sdutils.norm_t(latent_img_features)
-        x = self._feature_expander(latent_img_features)
+        latent_img_features = sdutils.norm_t(latent_img_features.float())
+        x = self._res_stack(latent_img_features)
         x = self._seq_expander(x)
 
         seq_features = self._seq_reshaper(x) + self._positional_embedding
@@ -331,10 +361,10 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
             probs[sdconsts.eot_token] = 1
             return probs.repeat((tokens.shape[0], 1))
 
-        curr_embedded = self._clip_model.token_embedding(tokens)
-        curr_embedded = curr_embedded + self._clip_model.positional_embedding[:size]
-        curr_embedded = curr_embedded
-        memory = torch.cat(num_batch * [memory]).view(num_batch, 77, 768)
+        curr_embedded = self._token_embedding(tokens)
+        curr_embedded = curr_embedded + self._positional_embedding[:size]
+
+        memory = torch.cat(num_batch * [memory]).view(num_batch, 77, -1)
 
         decoder_out = self._decoder(
             tgt=curr_embedded,
@@ -373,10 +403,10 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         num_batch = tokens.size(0)
         size = tokens.size(1)
 
-        curr_embedded = self._clip_model.token_embedding(tokens)
-        curr_embedded = curr_embedded + self._clip_model.positional_embedding[:size]
+        curr_embedded = self._token_embedding(tokens)
+        curr_embedded = curr_embedded + self._positional_embedding[:size]
         curr_embedded = curr_embedded
-        memory = torch.cat(num_batch * [memory]).view(num_batch, 77, 768)
+        memory = torch.cat(num_batch * [memory]).view(num_batch, 77, -1)
 
         decoder_out = self._decoder(
             tgt=curr_embedded,
@@ -461,8 +491,8 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         banned_words = [
             "erotic",
             "furry",
-            "cyberpunk",
-            "steampunk",
+            #"cyberpunk",
+            #"steampunk",
             "minecraft",
             # "skull",
             "0",
@@ -476,7 +506,7 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
             "8",
             "9",
             "cp",
-            # "jpg",
+            "jpg",
             "nude",
             "naked",
             "kid",

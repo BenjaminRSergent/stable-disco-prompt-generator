@@ -1,7 +1,7 @@
 import ai.stabledisco.constants as sdconsts
 import ai.stabledisco.utils as sdutils
 import ai.torchmodules.utils as torchutils
-import clip
+import open_clip
 import torch
 from ai.stabledisco import decoderpipeline
 from ai.stabledisco.clipmodel import ClipModel
@@ -219,7 +219,7 @@ class BeamSearcher:
             else:
                 if isinstance(start_tokens, str):
                     # Don't include the end token
-                    start_tokens = clip.tokenize(start_tokens)[0].cuda()
+                    start_tokens = open_clip.tokenize(start_tokens)[0].cuda()
 
                 self.final_beam_tokens.append(start_tokens)
                 self.iter_num = sdutils.find_end_idx(start_tokens) - 1
@@ -524,6 +524,7 @@ class BeamSearcher:
 
             next_beam_tokens.append(candidate.get_beam_tokens())
             next_beam_tokens_full[idx] = candidate.get_beam_tokens_with_end()
+
             idx += 1
 
         return next_beam_tokens, next_beam_tokens_full
@@ -532,6 +533,7 @@ class BeamSearcher:
         # The first iteration has two tokens before the end: the start token place the first selection
         eot_idx = search_state.iter_num + 2
         # TODO:Rank
+        
         next_beam_cosine_sim_aug = self._clip_model.cosine_similarity(
             search_state.features, next_beam_tokens_full, end_idx=eot_idx, verbosity=2
         )
@@ -578,7 +580,7 @@ class BeamSearcher:
         # the same prompt
         orig = self._clip_model.cosine_similarity(search_state.features, [search_state.final_beam_tokens[-1]])[0]
 
-        telephone_tokens = clip.tokenize(self._tokens_model.decode(search_state.final_beam_tokens[-1]))[0].cuda()
+        telephone_tokens = open_clip.tokenize(self._tokens_model.decode(search_state.final_beam_tokens[-1]))[0].cuda()
         telephone = self._clip_model.cosine_similarity(search_state.features, [telephone_tokens])[0]
         
         print(f"Cosine telephone {search_state.best_match_cosine: 0.4f} recalc {orig:0.4f} to {telephone: 0.4f}")

@@ -123,7 +123,8 @@ def make_prompt(
                         )
 
                         ret += model.reconstruct_ddim(samples_ddim)
-                        for x in inter["pred_x0"]:
-                            inter_ret += model.reconstruct_ddim(x)
+                        if inter and "pred_x0" in inter:
+                            for x in inter["pred_x0"]:
+                                inter_ret += model.reconstruct_ddim(x)
 
     return ret, inter_ret

@@ -5,6 +5,7 @@ import numpy as np
 import PIL
 import torch
 from ldm.models.diffusion.ddim import DDIMSampler
+from ldm.models.diffusion.dpm_solver import DPMSolverSampler
 from ldm.models.diffusion.plms import PLMSSampler
 
 
@@ -25,7 +26,7 @@ class StableDiscoModel:
         if use_plms:
             return PLMSSampler(self._model)
 
-        return DDIMSampler(self._model)
+        return DPMSolverSampler(self._model)
 
     def ema_scope(self):
         return self._model.ema_scope()

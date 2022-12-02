@@ -61,6 +61,21 @@ class IsTextFeaturesModel(torchmodules.BaseModel):
         # Input = (-1, 77, num_features)
         # Output = (-1, 77, vocab_size)
         # Loss = diffable encoding
+        
+        self._first_res_stack = torchlayers.ResDenseStack(
+            input_size=sdconsts.feature_width,
+            block_width=sdconsts.feature_width * res_unit_mul,
+            layers=res_layers//2,
+            dropout=dropout,
+            activation=nn.LeakyReLU,
+        )
+        
+        self._reducer = torchlayers.LinearWithActivation(
+            sdconsts.feature_width,
+            sdconsts.vit_l_feature_width,
+            dropout=dropout,
+            batch_norm_type=None,
+        )
 
         self._res_stack = torchlayers.ResDenseStack(
             input_size=sdconsts.feature_width,
@@ -108,6 +123,8 @@ class IsTextFeaturesModel(torchmodules.BaseModel):
 
     def forward(self, features):
         x = features.float() / features.norm(dim=-1, keepdim=True)
+        x = self._first_res_stack(x)
+        x = self._reducer(x)
         x = self._res_stack(x)
         x = self._dense_stack(x)
 

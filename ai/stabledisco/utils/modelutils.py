@@ -1,6 +1,7 @@
 import os
 
 import clip
+import open_clip
 import numpy as np
 import PIL
 import torch

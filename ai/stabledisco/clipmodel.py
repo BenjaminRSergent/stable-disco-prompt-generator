@@ -2,7 +2,7 @@ import typing
 
 import ai.stabledisco.constants as sdconsts
 import ai.stabledisco.utils as sdutils
-import clip
+import open_clip
 import PIL
 import torch
 from ai.stabledisco.encodedtext import EncodedText
@@ -39,7 +39,7 @@ class ClipModel(torch.nn.Module):
                     similarity += most_disim_features[i].unsqueeze(0) @ text_features.T
                 similarity /= most_disim_features.shape[0]
 
-                _, top_labels = similarity.float().cpu().topk(1, dim=-1, largest=False)
+                _, top_labels = similarity.half().cpu().topk(1, dim=-1, largest=False)
                 encoded_pos = top_labels[0][0]
                 most_disim.append(encoded_test_array[encoded_pos])
                 encoded_test_array = torch.cat(
@@ -61,6 +61,7 @@ class ClipModel(torch.nn.Module):
                 text_features = self.features_from_encoded(encoded_test_array, verbosity=verbosity)
 
             baseline_features = baseline_features
+            
             if len(text_features.shape) == 3:
                 text_features = text_features.squeeze(0)
 
@@ -69,7 +70,7 @@ class ClipModel(torch.nn.Module):
 
             similarity = torch.zeros(
                 (1, len(encoded_test_array)),
-                dtype=torch.float,
+                dtype=torch.half,
                 device=baseline_features.device,
             )
             for i in range(baseline_features.shape[0]):
@@ -117,7 +118,7 @@ class ClipModel(torch.nn.Module):
             baseline_features, encoded_test_array, end_idx=end_idx, verbosity=verbosity
         ).unsqueeze(0)
 
-        top_probs, top_labels = similarity.float().cpu().topk(top_count, dim=-1, largest=largest)
+        top_probs, top_labels = similarity.half().cpu().topk(top_count, dim=-1, largest=largest)
         top_words = [encoded_test_array[top_labels[0][i].numpy()] for i in range(top_count)]
         top_probs = [top_probs[0][i].numpy() for i in range(top_count)]
         return top_words, top_probs
@@ -133,23 +134,24 @@ class ClipModel(torch.nn.Module):
         return self.rank_similarity(features_a, [encoded_b], verbosity=0)[1][0]
 
     # TODO: Merge to one function checking type
-    def features_from_text(self, text, step_size=10000, verbosity=1, cuda=True):
+    def features_from_text(self, text, step_size=15000, verbosity=1, cuda=True):
         if type(text) is not list:
             text = [text]
         encoded_text = EncodedText.from_text_list(text)
         return self.features_from_encoded(encoded_text, step_size=step_size, verbosity=verbosity, cuda=cuda)
 
-    def get_features(self, encoded, verbosity=1, normalize=True):
+    def get_features(self, encoded, verbosity=1, normalize=True, cuda=True):
         if type(encoded) is str:
-            encoded = clip.tokenize(encoded, truncate=True).cuda()
+            encoded = open_clip.tokenize(encoded).cuda()
         elif type(encoded) is not list and type(encoded) is not torch.Tensor:
             encoded = [encoded]
 
         if type(encoded[0]) == torch.Tensor:
-            return self.features_from_tokens(encoded, normalize=normalize, verbosity=verbosity)
-        return self.features_from_encoded(encoded, normalize=normalize, verbosity=verbosity)
+            return self.features_from_tokens(encoded, normalize=normalize, verbosity=verbosity, cuda=cuda)
+        
+        return self.features_from_encoded(encoded, normalize=normalize, verbosity=verbosity, cuda=cuda)
 
-    def features_from_encoded(self, encoded_text, step_size=10000, verbosity=1, normalize=True, cuda=True):
+    def features_from_encoded(self, encoded_text, step_size=15000, verbosity=1, normalize=True, cuda=True):
         if type(encoded_text) is not list:
             encoded_text = [encoded_text]
         tokens = torch.stack([encoded.get_tokens() for encoded in encoded_text])
@@ -157,24 +159,31 @@ class ClipModel(torch.nn.Module):
             tokens, step_size=step_size, normalize=normalize, verbosity=verbosity, cuda=cuda
         )
 
-    def features_from_tokens(self, tokens, step_size=5000, verbosity=1, normalize=True, cuda=True, end_idx=-1):
+    def features_from_tokens(self, tokens, step_size=15000, verbosity=1, normalize=True, cuda=True, end_idx=-1):
         if type(tokens) is list:
             tokens = torch.stack(tuple(tokens))
         tokens = sdutils.change_rev(tokens, False).view(tokens.shape)
 
+        if len(tokens.shape) == 1:
+            tokens = tokens.unsqueeze(0)
+        if end_idx == -1:
+            end_idx = tokens.argmax(dim=-1).reshape(-1)
+        
         def local_encode_func(tokens):
             if len(tokens.shape) == 1:
                 tokens = tokens.unsqueeze(0)
             elif len(tokens.shape) == 3 and tokens.size(0) == 1:
                 tokens = tokens.squeeze(0)
 
-            if end_idx == -1:
-                features = self._model.encode_text(tokens)
-                if normalize:
-                    features = sdutils.norm_t(features)
-                return features
+            features = self._model.encode_text(tokens)
+            
+            features = features[torch.arange(tokens.shape[0]), end_idx]
+          
+            if normalize:
+                features = sdutils.norm_t(features)
+                
+            return features
 
-            return self._features_from_uniform_end_tokens(tokens, end_idx).view(tokens.size(0), -1)
 
         verbosity = 0
         with torch.no_grad():
@@ -184,7 +193,7 @@ class ClipModel(torch.nn.Module):
                     text_features = text_features.cpu()
                 return text_features
 
-            text_features = torch.tensor([], dtype=torch.float).cuda()
+            text_features = torch.tensor([], dtype=torch.half).cuda()
 
             if verbosity > 0:
                 print(f"Encoding {len(tokens)} entries")
@@ -215,12 +224,13 @@ class ClipModel(torch.nn.Module):
 
     def _features_from_uniform_end_tokens(self, tokens, end_idx):
         # The operation is much faster if all share the same end idx
-        x = self._model.token_embedding(tokens).type(self._model.dtype)  # [batch_size, n_ctx, d_model]
-        x = x + self._model.positional_embedding.type(self._model.dtype)
+        model = self._model.model
+        x = model.token_embedding(tokens)  # [batch_size, n_ctx, d_model]
+        x = x + model.positional_embedding
         x = x.permute(1, 0, 2)  # NLD -> LND
-        x = self._model.transformer(x)
+        x = model.transformer(x)
         x = x.permute(1, 0, 2)  # LND -> NLD
-        x = self._model.ln_final(x).type(self._model.dtype)
+        x = self._model.ln_final(x)
         x = x.permute(1, 0, 2)[end_idx]
         x = x
         
@@ -318,7 +328,7 @@ class ClipModel(torch.nn.Module):
         self._embedded_end = None
         if self._embedded_end is None:
             # Put the end token embedding in front, remove the start
-            empty_tokens = clip.tokenize("").cuda()[0]
+            empty_tokens = open_clip.tokenize("").cuda()[0]
             self._embedded_end = self.embed_partial_tokens(empty_tokens)
             self._embedded_end[0, 0] = self._embedded_end[0, 1]
             self._embedded_end[0, 1] = self._embedded_end[0, -1]
@@ -328,13 +338,14 @@ class ClipModel(torch.nn.Module):
     def encode_text(self, text, truncate=False):
         max_len = 77
         if isinstance(text, str):
-            tokens = clip.tokenize(text, truncate=truncate).cuda()
+            tokens = open_clip.tokenize(text, truncate=truncate).cuda()
         elif isinstance(text, torch.Tensor):
             tokens = text
         elif isinstance(text, EncodedText):
             tokens = text.get_tokens()
         with torch.no_grad():
-            encoded_text = self._model.encode_text(tokens.reshape(-1, max_len))[0]
+            tokens = tokens.reshape(-1, max_len)
+            encoded_text = self._model.encode_text(tokens)[:, -1]
 
         return encoded_text / encoded_text.norm(dim=-1, keepdim=True)
 

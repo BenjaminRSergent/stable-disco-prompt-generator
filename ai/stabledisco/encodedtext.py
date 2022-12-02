@@ -1,6 +1,8 @@
 import typing
 
 import clip
+import open_clip
+
 import torch
 
 
@@ -24,7 +26,7 @@ class EncodedText:
     @classmethod
     def from_text(cls, text: str, ignore_long=False, cuda=True) -> "EncodedText":
         self = cls.__new__(cls)
-        tokens = clip.tokenize(text, truncate=ignore_long)
+        tokens = open_clip.tokenize(text, truncate=ignore_long)
         if cuda:
             tokens = tokens.cuda()
 

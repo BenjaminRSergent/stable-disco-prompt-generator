@@ -4,6 +4,7 @@ import random
 import ai.stabledisco.constants as sdconsts
 import ai.stabledisco.utils as sdutils
 import clip
+import open_clip
 import torch
 from ai.stabledisco.clipmodel import ClipModel
 from ai.stabledisco.decoderpipeline.promptmetrics import CombinedClipRatingCalculator
@@ -307,7 +308,7 @@ class PromptUpgrader:
         target_features /= target_features.norm(dim=-1, keepdim=True)
 
         if isinstance(prompt, str):
-            tokens = clip.tokenize(prompt, truncate=True)[0].cuda()
+            tokens = open_clip.tokenize(prompt)[0].cuda()
         else:
             tokens = prompt.clone()
 
@@ -432,7 +433,9 @@ class PromptUpgrader:
             with state.batch():
                 for curr_cycle in range(max_cycles):
                     prompt = sdutils.decode_tokens(state.get_tokens())[0]
-                    to_test = clip.tokenize(sdutils.get_all_syn_reps(prompt), truncate=True).cuda()
+                    to_test = open_clip.tokenize(sdutils.get_all_syn_reps(prompt)).cuda()
+                    if len(to_test) < 2:
+                        break
                     test_stack = torch.stack(tuple(to_test))
                     top_tokens, top_sim = self._calculator.rank(
                         state.target_features,
@@ -498,7 +501,7 @@ class PromptUpgrader:
                 thresh=self._config.removal_sim_thresh,
                 orig_features=state.target_features,
             )
-            trimmed_tokens = clip.tokenize(trimmed_prompt, truncate=True)[0].cuda()
+            trimmed_tokens = open_clip.tokenize(trimmed_prompt)[0].cuda()
             trimmed_score = self._calculator.score_tokens(
                 state.target_features,
                 trimmed_tokens,

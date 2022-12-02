@@ -1,5 +1,6 @@
 from enum import Enum
 
+import ai.stabledisco.constants as sdconsts
 import ai.stabledisco.utils as sdutils
 import ai.torchmodules.data as torchdata
 import ai.torchmodules.utils as torchutils
@@ -318,12 +319,12 @@ class AlteredFeaturesSet(Dataset):
         self._data_idxs = None
 
     def _make_rand_shift(self, scale_div):
-        shift = torch.randn((768,))
+        shift = torch.randn((sdconsts.feature_width,))
         shift /= shift.norm(dim=-1, keepdim=True)
         min_scale = 0.6
 
         scale = (torch.rand((1,)) + min_scale) / scale_div
-        return (scale * shift).view(1, 768)
+        return (scale * shift).view(1, sdconsts.feature_width)
 
     def __len__(self):
         return self._num_steps * (self._end_idx - self._start_idx)

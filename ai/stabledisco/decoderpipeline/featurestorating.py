@@ -49,51 +49,43 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
         device=None,
     ):
         super().__init__(FeaturesToRatingModel.name + name_suffix, device=device)
-        self._bin_scales = torch.tensor(
-            [
-                0.8927,
-                0.8134,
-                0.8475,
-                0.8758,
-                0.9005,
-                0.9209,
-                0.9377,
-                0.9516,
-                0.9626,
-                0.9717,
-                0.9787,
-                0.9842,
-                0.9884,
-                0.9918,
-                0.9943,
-                0.9960,
-                0.9973,
-                0.9982,
-                0.9988,
-                0.9992,
-                0.9995,
-                0.9997,
-                0.9998,
-                0.9999,
-                0.9999,
-                1.0000,
-                1.0000,
-                1.0000,
-                1.0000,
-                1.0000,
-                1.0000,
-                1.0000,
-                1.0000,
-                1.0000,
-                1.0000,
-                1.0000,
-            ],
+        self._bin_scales = torch.tensor([7.3358e-05, 4.2169e-05, 5.1622e-05, 6.3372e-05, 7.9107e-05, 9.9469e-05,
+        1.2624e-04, 1.6254e-04, 2.1020e-04, 2.7763e-04, 3.6987e-04, 4.9787e-04,
+        6.8132e-04, 9.5988e-04, 1.3756e-03, 1.9699e-03, 2.8703e-03, 4.4033e-03,
+        6.6726e-03, 1.0452e-02, 1.6541e-02, 2.6091e-02, 4.4064e-02, 7.4551e-02,
+        1.3000e-01, 2.3330e-01, 3.6674e-01, 7.1589e-01, 1.3936e+00, 2.4307e+00,
+        4.0200e+00, 1.0452e+01, 1.0452e+01, 1.0452e+01, 1.0452e+01, 1.0452e+01],
             device=self._device,
             requires_grad=True,
         )
+        
+        dense_stack_units = [
+            (3, self._transformer_width * 2),
+            (3, self._transformer_width * 4),
+            (1, self._transformer_width * 6),
+            (1, self._transformer_width * 8),
+        ]
+
+        self.in_features = dense_stack_units[0][1]
+        self.out_features = dense_stack_units[-1][1]
+
+        self._first_res_stack = torchlayers.ResDenseStack(
+            input_size=sdconsts.feature_width,
+            block_width=sdconsts.feature_width * res_unit_mul,
+            layers=res_layers//2,
+            dropout=start_dropout,
+            activation=nn.LeakyReLU,
+        )
+        
+        self._reducer = torchlayers.LinearWithActivation(
+            sdconsts.feature_width,
+            sdconsts.vit_l_feature_width,
+            dropout=start_dropout,
+            batch_norm_type=None,
+        )
 
         self._res_stack = torchlayers.ReducingResDenseStack(
-            sdconsts.feature_width,
+            sdconsts.vit_l_feature_width,
             num_res_blocks=num_res_blocks,
             res_unit_mul=res_unit_mul,
             res_layers=res_layers,
@@ -138,7 +130,9 @@ class FeaturesToRatingModel(torchmodules.BaseModel):
 
     def forward(self, features):
         x = features / features.norm(dim=-1, keepdim=True)
-        x = self._res_stack(features)
+        x = self._first_res_stack(x)
+        x = self._reducer(x)
+        x = self._res_stack(x)
         return self._rating_out(x).view(-1)
 
     def get_rating(self, features):

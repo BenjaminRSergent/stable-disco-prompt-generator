@@ -1,4 +1,5 @@
 import clip
+import open_clip
 import torch
 import ai.stabledisco.utils as sdutils
 
@@ -15,7 +16,7 @@ class Tokens(torch.Tensor):
 
     @classmethod
     def from_str(cls, prompt, cuda=True):
-        self = Tokens(clip.tokenize(prompt)[0].long())
+        self = Tokens(open_clip.tokenize(prompt)[0].long())
         if cuda:
             return self.cuda()
         else:
