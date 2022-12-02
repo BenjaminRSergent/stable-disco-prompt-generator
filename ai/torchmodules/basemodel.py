@@ -12,7 +12,7 @@ from utils import get_default_path
 
 
 class BaseModel(nn.Module):
-    def __init__(self, name: str, device=None):
+    def __init__(self, name: str=None, device=None):
         super().__init__()
         self._name = name
         self._loss_func = None
@@ -31,6 +31,14 @@ class BaseModel(nn.Module):
     def unfreeze(self):
         for param in self.parameters():
             param.requires_grad = True
+            
+    def half(self):
+        super().half()
+        for layer in self.modules():
+            if isinstance(layer, nn.BatchNorm2d) or isinstance(layer, nn.BatchNorm1d) or isinstance(layer, nn.LayerNorm):
+                layer.float()
+                
+        return self
 
     def calc_loss(self, *args, **kwargs):
         if len(args) == 1 and issubclass(type(args[0]), DataLoader):

@@ -434,7 +434,7 @@ class BeamSearcher:
         )
         upgrade_triggered = force_upgrade or search_state.should_upgrade()
         if upgrades_allowed and upgrade_triggered:
-            print(f"Upgrading  {self._tokens_model.decode(top_beam)}")
+            print(f"Upgrading  {sdutils.decode_tokens(top_beam)}")
 
             beam_eot_idx = sdutils.find_end_idx(top_beam)
             new_beam = top_beam.clone()
@@ -580,7 +580,7 @@ class BeamSearcher:
         # the same prompt
         orig = self._clip_model.cosine_similarity(search_state.features, [search_state.final_beam_tokens[-1]])[0]
 
-        telephone_tokens = open_clip.tokenize(self._tokens_model.decode(search_state.final_beam_tokens[-1]))[0].cuda()
+        telephone_tokens = open_clip.tokenize(sdutils.decode_tokens(search_state.final_beam_tokens[-1]))[0].cuda()
         telephone = self._clip_model.cosine_similarity(search_state.features, [telephone_tokens])[0]
         
         print(f"Cosine telephone {search_state.best_match_cosine: 0.4f} recalc {orig:0.4f} to {telephone: 0.4f}")
@@ -588,7 +588,7 @@ class BeamSearcher:
         print("Tokens post", telephone_tokens)
         """
         print(
-            f"Top beam has cosine sim {search_state.best_match_cosine: 0.3f} with estimated quality of {rating: 0.3f}:\n {self._tokens_model.decode(search_state.final_beam_tokens[-1])[0]}\n"
+            f"Top beam has cosine sim {search_state.best_match_cosine: 0.3f} with estimated quality of {rating: 0.3f}:\n {sdutils.decode_tokens(search_state.final_beam_tokens[-1])[0]}\n"
         )
 
     def _safe_log(self, tensor):

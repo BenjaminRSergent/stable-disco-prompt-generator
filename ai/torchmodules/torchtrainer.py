@@ -98,7 +98,7 @@ class TorchTrainer:
 
         device = model.get_device()
         for idx, data in enumerate(data_loader):
-
+            
             with torch.autocast(device_type="cuda"):
                 if issubclass(type(data), dict):
                     torchutils.dict_to_device(data, device)

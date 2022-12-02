@@ -39,7 +39,7 @@ class ClipModel(torch.nn.Module):
                     similarity += most_disim_features[i].unsqueeze(0) @ text_features.T
                 similarity /= most_disim_features.shape[0]
 
-                _, top_labels = similarity.half().cpu().topk(1, dim=-1, largest=False)
+                _, top_labels = similarity.float().cpu().topk(1, dim=-1, largest=False)
                 encoded_pos = top_labels[0][0]
                 most_disim.append(encoded_test_array[encoded_pos])
                 encoded_test_array = torch.cat(
@@ -118,7 +118,7 @@ class ClipModel(torch.nn.Module):
             baseline_features, encoded_test_array, end_idx=end_idx, verbosity=verbosity
         ).unsqueeze(0)
 
-        top_probs, top_labels = similarity.half().cpu().topk(top_count, dim=-1, largest=largest)
+        top_probs, top_labels = similarity.float().cpu().topk(top_count, dim=-1, largest=largest)
         top_words = [encoded_test_array[top_labels[0][i].numpy()] for i in range(top_count)]
         top_probs = [top_probs[0][i].numpy() for i in range(top_count)]
         return top_words, top_probs
@@ -142,7 +142,9 @@ class ClipModel(torch.nn.Module):
 
     def get_features(self, encoded, verbosity=1, normalize=True, cuda=True):
         if type(encoded) is str:
-            encoded = open_clip.tokenize(encoded).cuda()
+            encoded = open_clip.tokenize(encoded).reshape(-1, sdconsts.prompt_token_len)
+            if cuda:
+                encoded.cuda()
         elif type(encoded) is not list and type(encoded) is not torch.Tensor:
             encoded = [encoded]
 
@@ -175,9 +177,10 @@ class ClipModel(torch.nn.Module):
             elif len(tokens.shape) == 3 and tokens.size(0) == 1:
                 tokens = tokens.squeeze(0)
 
-            features = self._model.encode_text(tokens)
+            features = self._model.encode_text(tokens.cuda())
             
-            features = features[torch.arange(tokens.shape[0]), end_idx]
+            if len(features.shape) == 3: 
+                features = features[torch.arange(tokens.shape[0]), end_idx]
           
             if normalize:
                 features = sdutils.norm_t(features)

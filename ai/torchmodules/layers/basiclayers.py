@@ -4,6 +4,8 @@ from enum import Enum
 import torch
 import torch.nn as nn
 
+from ai.torchmodules.basemodel import BaseModel
+
 
 class QuickGELU(nn.Module):
     def forward(self, x: torch.Tensor):
@@ -50,10 +52,13 @@ class Normalization(nn.Module):
             raise Exception(f"Bad val {norm_type}")
 
     def forward(self, x_inputs):
-        return self._batch_layer(x_inputs)
+        return self._batch_layer(x_inputs.float())
+    
+    def half(self):
+        pass # Nope
 
 
-class LinearWithActivation(nn.Module):
+class LinearWithActivation(BaseModel):
     def __init__(
         self,
         input_size,
@@ -96,6 +101,12 @@ class LinearWithActivation(nn.Module):
 
     def forward(self, x):
         return self._layers(x)
+    
+    def half(self):
+        super().half()
+        # TODO: Refer by name
+        self._layers[-2].float()
+        return self
 
     def get_input_size(self):
         return self._layer.first_layer.in_features
@@ -104,7 +115,7 @@ class LinearWithActivation(nn.Module):
         return self._layer.first_layer.out_features
 
 
-class ResAttentionBlock(nn.Module):
+class ResAttentionBlock(BaseModel):
     def __init__(self, d_model: int, n_head: int, seq_len: int):
         super().__init__()
 
@@ -140,7 +151,7 @@ class ResAttentionBlock(nn.Module):
         return mask
 
 
-class ResLinear(nn.Module):
+class ResLinear(BaseModel):
     def __init__(
         self,
         input_size,
@@ -179,6 +190,11 @@ class ResLinear(nn.Module):
 
     def forward(self, x):
         return x + self._layers(x)
+    
+    def half(self):
+        super().half()
+        self._layers[-1].float()
+        return self
 
     def get_input_size(self):
         return self._layer.first_layer.in_features

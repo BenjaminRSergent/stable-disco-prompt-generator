@@ -291,7 +291,7 @@ class TextFeaturesToRatingSet(Dataset):
 
 
 class AlteredFeaturesSet(Dataset):
-    def __init__(self, features, start_idx, end_idx, feature_width=768, num_steps=5, shuffle=True, device=None):
+    def __init__(self, features, start_idx, end_idx, feature_width=1024, num_steps=5, shuffle=True, device=None):
         self.all_features = features
 
         self._start_idx = start_idx
@@ -321,7 +321,7 @@ class AlteredFeaturesSet(Dataset):
     def _make_rand_shift(self, scale_div):
         shift = torch.randn((sdconsts.feature_width,))
         shift /= shift.norm(dim=-1, keepdim=True)
-        min_scale = 0.6
+        min_scale = 0.8
 
         scale = (torch.rand((1,)) + min_scale) / scale_div
         return (scale * shift).view(1, sdconsts.feature_width)
@@ -355,7 +355,7 @@ class AlteredFeaturesSet(Dataset):
 
     def _get_features_for_idx(self, idx):
         actual_idx = self._data_idxs[idx // self._num_steps]
-        features = self.all_features[actual_idx].float()
+        features = self.all_features[actual_idx].half()
         return (features / features.norm(dim=-1, keepdim=True)).view(-1)
 
 
@@ -408,14 +408,6 @@ def get_tokens_to_features(
     shuffle=True,
     pin_memory=True,
 ):
-    """
-    if not isinstance(text_tokens, torch.Tensor):
-        text_tokens = torch.tensor(np.array(text_tokens).astype(np.int32))
-
-
-    if not isinstance(features, torch.Tensor):
-        features = torch.tensor(np.array(features).astype(np.float32))
-    """
     training_idx, val_idx = torchutils.get_split_idxs(features.size(0), val_split)
 
     train_data_set = DirectTextFeaturesSet(
@@ -457,9 +449,9 @@ def get_feature_to_rating_data_loader(
     num_workers=8,
 ):
     if not isinstance(features, torch.Tensor):
-        features = torch.tensor(np.array(features).astype(np.float32))
+        features = torch.tensor(np.array(features).astype(np.float16))
     if not isinstance(ratings, torch.Tensor):
-        ratings = torch.tensor(np.array(ratings).astype(np.float32))
+        ratings = torch.tensor(np.array(ratings).astype(np.float16))
 
     training_idx, val_idx = torchutils.get_split_idxs(features.size(0), val_split)
 
@@ -484,7 +476,7 @@ def get_altered_feature_data_loader(
     pin_memory=True,
 ):
     if not isinstance(features, torch.Tensor):
-        features = torch.tensor(np.array(features).astype(np.float32))
+        features = torch.tensor(np.array(features).astype(np.float16))
     training_idx, val_idx = torchutils.get_split_idxs(features.size(0), val_split)
 
     train_data_set = AlteredFeaturesSet(features, *training_idx)

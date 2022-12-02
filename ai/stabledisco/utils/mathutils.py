@@ -38,7 +38,7 @@ def norm_t(x, dim=-1, keepdim=True):
 
 
 def cosine_sim(x, y):
-    return unflatten(x) @ unflatten(y).T
+    return unflatten(x.float()) @ unflatten(y.float()).T
 
 
 def round_to_multiple(x, base):

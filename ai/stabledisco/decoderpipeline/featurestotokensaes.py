@@ -1,5 +1,6 @@
 import copy
 import re
+import types
 
 import ai.stabledisco.constants as sdconsts
 import ai.stabledisco.utils as sdutils
@@ -61,10 +62,10 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         name_suffix="",
         lower_dropout=0.1,
         upper_dropout=0.05,
-        block_mul=3,
+        block_mul=4,
         res_unit_mul=3,
         heads=16,
-        res_layers=6,
+        res_layers=8,
         layers=8,
         decoder_mul=1.5,
         device=None,
@@ -76,8 +77,6 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         self._banned_mask = None
         self._bool_to_mask = {}
 
-        self._dtype = torch.half
-
         self._clip_model = clip_model
 
         for param in self._clip_model.parameters():
@@ -88,57 +87,42 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         self._transformer_heads = heads
         self._transformer_layers = layers
 
-        upper_width = 1024
-        self._token_embedding = nn.Embedding(sdconsts.num_tokens, upper_width)
-        self._token_embedding.weight.data = clip_model.token_embedding.weight.data.clone()
+        self._token_embedding = nn.Embedding(sdconsts.num_tokens, sdconsts.feature_width)
+        self._token_embedding.weight.data = clip_model._model.model.token_embedding.weight.data.clone()
 
         for param in self._token_embedding.parameters():
             param.requires_grad = not freeze_embedding
 
-        self.register_buffer("_positional_embedding", clip_model.positional_embedding[:, :upper_width])
+        self.register_buffer("_positional_embedding", clip_model._model.model.positional_embedding)
 
         self._res_stack = torchlayers.ResDenseStack(
             input_size=sdconsts.feature_width,
-            block_width=upper_width * res_unit_mul,
+            block_width=sdconsts.feature_width * res_unit_mul,
             layers=res_layers,
             dropout=lower_dropout,
             activation=nn.LeakyReLU,
         )
         
         dense_stack_units = [
-            (1, upper_width * 77),
+            (1, sdconsts.feature_width * 77),
         ]
-
-        self.in_features = dense_stack_units[0][1]
-        self.out_features = dense_stack_units[-1][1]
 
         self._seq_expander = torchlayers.LinearWithActivation(
             sdconsts.feature_width,
-            self._seq_len * upper_width,
+            self._seq_len * sdconsts.feature_width,
             dropout=lower_dropout,
             batch_norm_type=None,
         )
 
-        self._seq_reshaper = torchlayers.Reshaper((-1, self._seq_len, upper_width))
-        self._pre_encode_ln = nn.LayerNorm(upper_width)
+        self._seq_reshaper = torchlayers.Reshaper((-1, self._seq_len, sdconsts.feature_width))
+        self._pre_encode_ln = nn.LayerNorm(sdconsts.feature_width)
 
-        block_width = int(upper_width * block_mul)
-        self._rev_encoder = nn.TransformerEncoder(
-            nn.TransformerEncoderLayer(
-                d_model=upper_width,
-                nhead=self._transformer_heads,
-                dim_feedforward=block_width,
-                activation=torchlayers.QuickGELU(),
-                dropout=upper_dropout,
-                batch_first=True,
-            ),
-            num_layers=self._transformer_layers,
-        )
+        block_width = int(sdconsts.feature_width * block_mul)
 
         self._encoder = nn.TransformerEncoder(
             nn.TransformerEncoderLayer(
-                d_model=upper_width,
-                nhead=self._transformer_heads,
+                d_model=sdconsts.feature_width,
+                nhead=self._transformer_heads//2,
                 dim_feedforward=block_width,
                 activation=torchlayers.QuickGELU(),
                 dropout=upper_dropout,
@@ -149,9 +133,9 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
 
         self._decoder = nn.TransformerDecoder(
             nn.TransformerDecoderLayer(
-                d_model=upper_width,
+                d_model=sdconsts.feature_width,
                 nhead=self._transformer_heads,
-                dim_feedforward=block_width,
+                dim_feedforward=int(block_width*decoder_mul),
                 activation=torchlayers.QuickGELU(),
                 dropout=0.0,
                 batch_first=True,
@@ -159,31 +143,10 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
             num_layers=int(self._transformer_layers * decoder_mul),
         )
 
-        self._rev_decoder = nn.TransformerDecoder(
-            nn.TransformerDecoderLayer(
-                d_model=upper_width,
-                nhead=self._transformer_heads,
-                dim_feedforward=block_width,
-                activation=torchlayers.QuickGELU(),
-                dropout=0.0,
-                batch_first=True,
-            ),
-            num_layers=int(self._transformer_layers * decoder_mul),
-        )
-
-        dense_stack_units = [(2, 2 * upper_width)]
-        self._two_way_hidden = torchlayers.DenseStack(
-            2 * upper_width,
-            dense_stack_units,
-            activation=nn.LeakyReLU,
-            dropout=0,
-            batch_norm_type=Normalization.NormType.LAYER,
-        )
-
-        self._two_way_vocab_out = torch.nn.Linear(2 * upper_width, sdconsts.num_tokens)
+        self._two_way_vocab_out = torch.nn.Linear(sdconsts.feature_width, sdconsts.num_tokens)
         nn.init.xavier_uniform_(self._two_way_vocab_out.weight)
 
-        self._vocab_out = torch.nn.Linear(upper_width, sdconsts.num_tokens)
+        self._vocab_out = torch.nn.Linear(sdconsts.feature_width, sdconsts.num_tokens)
         nn.init.xavier_uniform_(self._vocab_out.weight)
 
         self._loss_func = nn.CrossEntropyLoss()
@@ -205,9 +168,13 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         target_mask_diag = torch.zeros_like(self._target_mask).cuda()
         target_mask_diag[:-1, 1:].fill_diagonal_(float("-inf"))
         self.register_buffer("_target_mask_diag", target_mask_diag)
+        
+    def unfreeze(self):
+        super().unfreeze()
+        for param in self._clip_model.parameters():
+            param.requires_grad = False
 
     def initialize_student(self, teacher: nn.Module):
-
         self._seq_expander = copy.deepcopy(teacher._seq_expander)
         for param in self._seq_expander.parameters():
             param.requires_grad = False
@@ -217,10 +184,7 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         for param in self._token_embedding.parameters():
             param.requires_grad = False
 
-    def clone_forward_to_rev(self):
-        self._rev_decoder = copy.deepcopy(self._decoder)
-
-    def _calc_batch_loss(self, features: torch.Tensor, tokens: torch.Tensor = None, rev_tokens: torch.Tensor = None, forward_weight=0.75):
+    def _calc_batch_loss(self, features: torch.Tensor, tokens: torch.Tensor = None, rev_tokens: torch.Tensor = None, forward_weight=0.5):
         with torch.autocast(device_type="cuda"):
             outputs = self(features=features, tokens=tokens, rev_tokens=rev_tokens)
 
@@ -250,12 +214,6 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         features = features / features.norm(dim=-1, keepdim=True)
 
         encoder_out = self.features_to_memory(features, include_rev=False)
-        """
-        if rev_tokens is None:
-            encoder_out = self.features_to_memory(features, include_rev=False)
-        else:
-            encoder_out, rev_encoder_out = self.features_to_memory(features, include_rev=True)
-        """
         tgt = self._token_embedding(tokens) + self._positional_embedding
         decoder_out = self._decoder(
             memory=encoder_out,
@@ -264,31 +222,19 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
             tgt_key_padding_mask=(tokens == 0),
         )
         
+        # TODO: Remove rev_tokens from callers, replace with include_rev
+        if rev_tokens is None:
+            return self._vocab_out(decoder_out)
+        
         two_way_decoder_out = self._decoder(
             memory=encoder_out,
             tgt=tgt,
-            tgt_mask=self._target_mask,
+            tgt_mask=self._target_mask_diag,
             tgt_key_padding_mask=(tokens == 0),
         )
         return self._vocab_out(decoder_out), self._two_way_vocab_out(two_way_decoder_out) 
-        """
-        if rev_tokens is not None:
-            rev_tgt = self._token_embedding(rev_tokens) + self._positional_embedding
-            rev_decoder_out = self._rev_decoder(
-                memory=rev_encoder_out,
-                tgt=rev_tgt,
-                tgt_mask=self._target_mask,
-                tgt_key_padding_mask=(rev_tokens == 0),
-            )
-            full_out = torch.cat((decoder_out, sdutils.rev_based_on_tokens(tokens, rev_decoder_out)), dim=-1)
-            return vocab_out, self._two_way_vocab_out(self._two_way_hidden(full_out))
-
-        return vocab_out
-        """
 
     def features_to_memory(self, latent_img_features, include_rev=False, dtype=None):
-        if not dtype:
-            dtype = self._dtype
         # latent_img_features = latent_img_features.to(dtype)
         latent_img_features = sdutils.norm_t(latent_img_features.float())
         x = self._res_stack(latent_img_features)
@@ -298,36 +244,16 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         seq_features = self._pre_encode_ln(seq_features)
 
         memory = self._encoder(seq_features)
+        # TODO: Remove include_rev from callers
         if not include_rev:
             return memory
 
-        return memory, self._rev_encoder(seq_features)
+        return memory, memory
 
     def generate_square_subsequent_mask(self, size):
         attn_shape = (1, size, size)
         subsequent_mask = torch.triu(torch.ones(attn_shape, device=self._device), diagonal=1)
         return subsequent_mask == 0
-
-    def decode(self, tokens):
-        if isinstance(tokens, list):
-            tokens = torch.stack(tuple(tokens))
-        if len(tokens.shape) == 1:
-            tokens = tokens.view(1, *tokens.shape)
-
-        if tokens.shape[-1] == sdconsts.num_tokens:
-            tokens = self.tokens_from_output(tokens)
-
-        tokens = sdutils.change_rev(tokens, False).view(tokens.shape)
-
-        texts = [clip_tokenizer.decode(toks.cpu().numpy()) for toks in tokens]
-        for idx in range(len(texts)):
-            texts[idx] = texts[idx].replace("<start_of_text>", "")
-            end_idx = texts[idx].find("<end_of_text>")
-
-            if end_idx != -1:
-                texts[idx] = texts[idx][:end_idx]
-
-        return texts
 
     # TODO: custom mask
     def get_next_probs(
@@ -409,23 +335,12 @@ class FeaturesToTokensAesModel(torchmodules.BaseModel):
         memory = torch.cat(num_batch * [memory]).view(num_batch, 77, -1)
 
         decoder_out = self._decoder(
-            tgt=curr_embedded,
-            memory=memory,
-            tgt_mask=self._target_mask[:size, :size],
-            tgt_key_padding_mask=(tokens == 0),
-        )
-
-        rev_tgt = self._token_embedding(rev_tokens) + self._positional_embedding
-        rev_decoder_out = self._rev_decoder(
             memory=rev_memory,
-            tgt=rev_tgt,
-            tgt_mask=self._target_mask,
+            tgt=curr_embedded,
+            tgt_mask=self._target_mask_diag[:size, :size],
             tgt_key_padding_mask=(rev_tokens == 0),
         )
-        rev_decoder = sdutils.rev_based_on_tokens(tokens, rev_decoder_out)
-        full_out = torch.cat((decoder_out, rev_decoder), dim=-1)
-        hidden = self._two_way_hidden(full_out)
-        vocab_out = self._two_way_vocab_out(hidden)
+        vocab_out = self._two_way_vocab_out(decoder_out)
         vocab_out = vocab_out[:, idx, :].squeeze(1)
 
         probs = torch.softmax(vocab_out, dim=-1)

@@ -1,8 +1,9 @@
 import torch.nn as nn
 from ai.torchmodules.layers.basiclayers import LinearWithActivation, Normalization, QuickGELU, ResLinear
+from ai.torchmodules.basemodel import BaseModel
 
 
-class ReducingResDenseStack(nn.Module):
+class ReducingResDenseStack(BaseModel):
     def __init__(
         self,
         input_size,
@@ -52,7 +53,7 @@ class ReducingResDenseStack(nn.Module):
         return self._resblocks(x_inputs)
 
 
-class ResDenseStack(nn.Module):
+class ResDenseStack(BaseModel):
     def __init__(
         self,
         input_size,
@@ -89,8 +90,7 @@ class ResDenseStack(nn.Module):
     def forward(self, x_inputs):
         return self.resblocks(x_inputs)
 
-
-class MixedResDenseStack(nn.Module):
+class MixedResDenseStack(BaseModel):
     def __init__(
         self,
         input_size,
@@ -140,7 +140,7 @@ class MixedResDenseStack(nn.Module):
         return curr_data
 
 
-class DenseStack(nn.Module):
+class DenseStack(BaseModel):
     def __init__(
         self,
         input_size,

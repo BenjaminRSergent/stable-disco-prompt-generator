@@ -436,6 +436,7 @@ class PromptUpgrader:
                     to_test = open_clip.tokenize(sdutils.get_all_syn_reps(prompt)).cuda()
                     if len(to_test) < 2:
                         break
+                    
                     test_stack = torch.stack(tuple(to_test))
                     top_tokens, top_sim = self._calculator.rank(
                         state.target_features,
